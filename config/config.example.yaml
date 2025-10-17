@@ -1,0 +1,54 @@
+# Example configuration file
+# Copy this file to config.yaml and update with your settings
+
+database:
+  url: "postgresql://user:password@localhost:5432/polymarket_bot"
+
+logging:
+  log_dir: "logs"
+  log_filename: "polymarket_bot"
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+
+polymarket_api:
+  proxy: "http://localhost:7891"  # Optional
+  timeout: 30.0
+  verify_ssl: true
+
+monitoring:
+  wallets:
+    - "0x..."  # Wallet addresses to monitor
+  poll_interval_seconds: 60
+  batch_size: 500
+
+queue:
+  type: "memory"  # "memory" or "rabbitmq"
+  memory:
+    max_workers: 10
+
+# Copy trading configuration (optional)
+user_wallets:
+  - name: "MyWallet"
+    address: "0x..."
+    proxy_address: "0x..."
+    private_key_env: "MY_WALLET_PRIVATE_KEY"
+    signature_type: 2  # 0=EOA, 1=Polymarket proxy, 2=Browser wallet proxy
+    copy_strategy:
+      min_trigger_amount: 100
+      min_trade_amount: 0
+      max_trade_amount: 100
+      order_type: "limit"  # "market" or "limit"
+      limit_order_duration: 7200
+      copy_mode: "scale"  # "scale" or "allocate"
+      scale_percentage: 1
+
+# API server configuration
+api:
+  host: "0.0.0.0"
+  port: 8000
+  cors_origins:
+    - "http://localhost:3000"
+
+# Telegram bot configuration
+telegram:
+  # Set TELEGRAM_BOT_TOKEN environment variable
+  allowed_users: []  # Optional: list of user IDs
