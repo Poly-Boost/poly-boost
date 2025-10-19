@@ -1,0 +1,96 @@
+### Polymarket Order API Tests
+### Make sure the API is running: python run_api.py
+
+@baseUrl = http://localhost:8000
+
+### Health Check
+GET {{baseUrl}}/health
+
+### Get Active Orders
+GET {{baseUrl}}/orders
+
+### Get Orders by Token ID
+GET {{baseUrl}}/orders?token_id=YOUR_TOKEN_ID_HERE
+
+### Market Sell Position (Sell All)
+POST {{baseUrl}}/orders/sell/market
+Content-Type: application/json
+
+{
+  "token_id": "YOUR_TOKEN_ID_HERE",
+  "amount": null,
+  "order_type": "FOK"
+}
+
+### Market Sell Position (Specific Amount)
+POST {{baseUrl}}/orders/sell/market
+Content-Type: application/json
+
+{
+  "token_id": "YOUR_TOKEN_ID_HERE",
+  "amount": 10.0,
+  "order_type": "FOK"
+}
+
+### Limit Sell Position
+POST {{baseUrl}}/orders/sell/limit
+Content-Type: application/json
+
+{
+  "token_id": "YOUR_TOKEN_ID_HERE",
+  "price": 0.55,
+  "amount": 10.0,
+  "order_type": "GTC"
+}
+
+### Limit Sell Position (Sell All)
+POST {{baseUrl}}/orders/sell/limit
+Content-Type: application/json
+
+{
+  "token_id": "YOUR_TOKEN_ID_HERE",
+  "price": 0.60,
+  "amount": null,
+  "order_type": "GTC"
+}
+
+### Market Buy Position
+POST {{baseUrl}}/orders/buy/market
+Content-Type: application/json
+
+{
+  "token_id": "YOUR_TOKEN_ID_HERE",
+  "amount": 10.0,
+  "order_type": "FOK"
+}
+
+### Limit Buy Position
+POST {{baseUrl}}/orders/buy/limit
+Content-Type: application/json
+
+{
+  "token_id": "YOUR_TOKEN_ID_HERE",
+  "price": 0.45,
+  "amount": 10.0,
+  "order_type": "GTC"
+}
+
+### Claim Rewards
+POST {{baseUrl}}/orders/rewards/claim
+Content-Type: application/json
+
+{
+  "condition_id": "YOUR_CONDITION_ID_HERE",
+  "amounts": [10.0, 5.0]
+}
+
+### Cancel Specific Order
+DELETE {{baseUrl}}/orders/cancel
+Content-Type: application/json
+
+{
+  "order_id": "YOUR_ORDER_ID_HERE"
+}
+
+### Cancel All Orders
+DELETE {{baseUrl}}/orders/cancel/all

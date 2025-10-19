@@ -1,0 +1,30 @@
+### Polymarket Position API Testing
+
+### Variables
+@baseUrl = http://localhost:8000
+@walletAddress = 0xfa68d87db6ca75a31baba74ab8259fd4728ff3ba
+
+### Health Check
+GET {{baseUrl}}/health
+
+### Get all positions for a wallet
+GET {{baseUrl}}/positions/{{walletAddress}}
+
+### Get position value for a wallet
+GET {{baseUrl}}/positions/{{walletAddress}}/value
+
+### Close a position (sell all shares)
+POST {{baseUrl}}/positions/{{walletAddress}}/close?market_id=0x1234567890abcdef1234567890abcdef12345678&outcome=YES
+
+### Close a position (sell specific amount)
+POST {{baseUrl}}/positions/{{walletAddress}}/close?market_id=0x1234567890abcdef1234567890abcdef12345678&outcome=NO&amount=100.5
+
+### Example with real wallet address (replace with actual address)
+# GET {{baseUrl}}/positions/0xYourWalletAddressHere
+
+### Example: Get positions for a specific wallet
+# @realWallet = 0x1234567890123456789012345678901234567890
+# GET {{baseUrl}}/positions/{{realWallet}}
+
+### Example: Get position value for a specific wallet
+# GET {{baseUrl}}/positions/{{realWallet}}/value

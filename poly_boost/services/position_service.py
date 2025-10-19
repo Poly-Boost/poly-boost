@@ -9,6 +9,8 @@ from decimal import Decimal
 import logging
 
 from py_clob_client.client import ClobClient
+from polymarket_apis.clients.data_client import PolymarketDataClient
+from polymarket_apis.types.data_types import Position
 
 
 logger = logging.getLogger(__name__)
@@ -17,16 +19,18 @@ logger = logging.getLogger(__name__)
 class PositionService:
     """Service for managing and querying positions."""
 
-    def __init__(self, clob_client: ClobClient):
+    def __init__(self, clob_client: ClobClient, data_client: PolymarketDataClient):
         """
         Initialize position service.
 
         Args:
             clob_client: Polymarket CLOB client instance
+            data_client: Polymarket Data API client instance
         """
         self.clob_client = clob_client
+        self.data_client = data_client
 
-    def get_positions(self, wallet_address: str) -> List[Dict[str, Any]]:
+    def get_positions(self, wallet_address: str) -> List[Position]:
         """
         Get all positions for a wallet.
 
@@ -34,18 +38,19 @@ class PositionService:
             wallet_address: Wallet address to query
 
         Returns:
-            List of position dictionaries
+            List of Position objects
 
         Raises:
             Exception: If API request fails
         """
         try:
-            # TODO: Implement using clob_client
-            # positions = self.clob_client.get_positions(wallet_address)
             logger.info(f"Fetching positions for wallet: {wallet_address}")
 
-            # Placeholder implementation
-            return []
+            # Get positions from data API
+            positions = self.data_client.get_positions(user=wallet_address)
+
+            logger.info(f"Found {len(positions)} positions for {wallet_address}")
+            return positions
         except Exception as e:
             logger.error(f"Failed to fetch positions for {wallet_address}: {e}")
             raise
@@ -64,12 +69,16 @@ class PositionService:
             Exception: If calculation fails
         """
         try:
-            positions = self.get_positions(wallet_address)
+            # Call API directly to avoid Pydantic validation issues
+            params = {"user": wallet_address}
+            response = self.data_client.client.get(
+                self.data_client._build_url("/value"),
+                params=params
+            )
+            response.raise_for_status()
+            data = response.json()[0]
 
-            total_value = Decimal("0")
-            for position in positions:
-                # TODO: Calculate value based on position data
-                pass
+            total_value = Decimal(str(data.get("value", 0)))
 
             logger.info(f"Total position value for {wallet_address}: {total_value}")
             return total_value
