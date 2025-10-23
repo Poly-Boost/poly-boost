@@ -5,13 +5,14 @@ Manages copy trading operations, including starting/stopping copy traders
 and monitoring their status.
 """
 
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Union
 import logging
 from threading import Lock
 
 from poly_boost.core.wallet_monitor import WalletMonitor
 from poly_boost.core.activity_queue import ActivityQueue
 from poly_boost.core.copy_trader import CopyTrader
+from poly_boost.core.wallet import Wallet, ProxyWallet
 
 
 logger = logging.getLogger(__name__)
@@ -42,7 +43,7 @@ class TradingService:
 
     def add_copy_trader(
         self,
-        wallet_config: dict,
+        wallet_config: Union[Wallet, dict],
         polygon_rpc_config: dict,
         verify_ssl: bool = True
     ) -> str:
@@ -50,7 +51,7 @@ class TradingService:
         Register a new copy trader.
 
         Args:
-            wallet_config: Wallet configuration dictionary
+            wallet_config: Wallet instance or wallet configuration dictionary
             polygon_rpc_config: Polygon RPC configuration
             verify_ssl: Whether to verify SSL certificates
 
@@ -60,9 +61,35 @@ class TradingService:
         Raises:
             ValueError: If trader already exists or configuration is invalid
         """
-        wallet_name = wallet_config.get("name")
-        if not wallet_name:
-            raise ValueError("Wallet configuration must include 'name' field")
+        # Convert Wallet object to dict if needed (for backward compatibility with CopyTrader)
+        if isinstance(wallet_config, Wallet):
+            wallet = wallet_config
+            wallet_name = wallet.name
+
+            # Convert Wallet to dict format expected by CopyTrader
+            wallet_dict = {
+                "name": wallet.name,
+                "address": wallet.eoa_address,
+                "signature_type": wallet.signature_type
+            }
+
+            # Add proxy_address if it's a proxy wallet
+            if isinstance(wallet, ProxyWallet):
+                wallet_dict["proxy_address"] = wallet.proxy_address
+
+            # Add private_key_env (CopyTrader needs this to load private key)
+            # Note: This is a workaround; ideally CopyTrader should accept Wallet objects
+            if wallet.requires_private_key:
+                # We need to extract the private_key_env from the Wallet
+                # For now, we'll need to pass it via the Wallet's internal attribute
+                if hasattr(wallet, '_private_key_env'):
+                    wallet_dict["private_key_env"] = wallet._private_key_env
+
+            wallet_config = wallet_dict
+        else:
+            wallet_name = wallet_config.get("name")
+            if not wallet_name:
+                raise ValueError("Wallet configuration must include 'name' field")
 
         with self._lock:
             if wallet_name in self.copy_traders:

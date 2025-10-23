@@ -13,6 +13,8 @@ from polymarket_apis.clients.clob_client import PolymarketClobClient
 from polymarket_apis.clients.web3_client import PolymarketWeb3Client
 from polymarket_apis.types.clob_types import OrderArgs, MarketOrderArgs, OrderType
 
+from poly_boost.core.wallet import Wallet
+
 
 logger = logging.getLogger(__name__)
 
@@ -22,47 +24,21 @@ class OrderService:
 
     def __init__(
         self,
+        wallet: Wallet,
         clob_client: PolymarketClobClient,
-        web3_client: PolymarketWeb3Client,
-        signature_type: int = 2,
-        wallet_address: Optional[str] = None
+        web3_client: PolymarketWeb3Client
     ):
         """
         Initialize order service.
 
         Args:
+            wallet: Wallet instance (encapsulates address and signature type)
             clob_client: Polymarket CLOB client instance
             web3_client: Polymarket Web3 client instance
-            signature_type: Wallet type (0=EOA, 1=Proxy, 2=Gnosis Safe)
-            wallet_address: Wallet address to use for operations (EOA or Proxy)
-                          If not provided, will be determined from signature_type
         """
+        self.wallet = wallet
         self.clob_client = clob_client
         self.web3_client = web3_client
-        self.signature_type = signature_type
-        self._wallet_address = wallet_address
-
-    def _get_wallet_address(self) -> str:
-        """
-        Get the correct wallet address based on configuration.
-        
-        Returns:
-            Wallet address (EOA or Proxy Wallet)
-        """
-        # If wallet_address was provided during initialization, use it
-        if self._wallet_address:
-            return self._wallet_address
-        
-        # Otherwise, determine from signature_type (fallback for backward compatibility)
-        if self.signature_type == 0:
-            # EOA wallet - use account address directly
-            return self.web3_client.account.address
-        else:
-            # Proxy wallet (type 1) or Gnosis Safe (type 2)
-            # Query from chain (less efficient)
-            return self.web3_client.exchange.functions.getPolyProxyWalletAddress(
-                self.web3_client.account.address
-            ).call()
 
     def sell_position_market(
         self,
@@ -87,11 +63,10 @@ class OrderService:
         try:
             # Get current token balance if amount not specified
             if amount is None:
-                # Get wallet address based on signature_type
-                wallet_address = self._get_wallet_address()
-                balance = self.web3_client.get_token_balance(token_id, wallet_address)
+                # Use wallet's api_address (automatically correct for EOA/Proxy)
+                balance = self.web3_client.get_token_balance(token_id, self.wallet.api_address)
                 amount = balance
-                logger.info(f"Selling all available balance: {amount} from {wallet_address}")
+                logger.info(f"Selling all available balance: {amount} from {self.wallet.name}")
             
             if amount <= 0:
                 raise ValueError("Amount must be greater than 0")
@@ -158,11 +133,10 @@ class OrderService:
         try:
             # Get current token balance if amount not specified
             if amount is None:
-                # Get wallet address based on signature_type
-                wallet_address = self._get_wallet_address()
-                balance = self.web3_client.get_token_balance(token_id, wallet_address)
+                # Use wallet's api_address (automatically correct for EOA/Proxy)
+                balance = self.web3_client.get_token_balance(token_id, self.wallet.api_address)
                 amount = balance
-                logger.info(f"Selling all available balance: {amount} from {wallet_address}")
+                logger.info(f"Selling all available balance: {amount} from {self.wallet.name}")
             
             if amount <= 0:
                 raise ValueError("Amount must be greater than 0")
@@ -361,10 +335,13 @@ class OrderService:
                 f"requested amounts={amounts}, token_ids={token_ids}"
             )
 
-            # Get the correct wallet address based on signature_type
+            # Get the correct wallet address (automatically correct for EOA/Proxy)
             from web3 import Web3
-            wallet_address = self._get_wallet_address()
-            logger.info(f"Signature type: {self.signature_type}, wallet address: {wallet_address}")
+            wallet_address = self.wallet.api_address
+            logger.info(
+                f"Wallet: {self.wallet.name}, signature type: {self.wallet.signature_type}, "
+                f"address: {wallet_address}"
+            )
             
             # Query actual balances if token_ids provided
             actual_amounts = []
@@ -414,8 +391,8 @@ class OrderService:
             # Redeem positions with actual amounts
             logger.info(f"Redeeming with amounts: {amounts}")
             
-            # Use different redeem method based on signature_type
-            if self.signature_type == 0:
+            # Use different redeem method based on wallet signature_type
+            if self.wallet.signature_type == 0:
                 # EOA mode - redeem directly without proxy
                 logger.info("EOA mode: redeeming directly from EOA address")
                 self._redeem_position_eoa(condition_id, amounts, neg_risk)
@@ -531,13 +508,13 @@ class OrderService:
         
         # Get the operator address based on neg_risk
         operator = (
-            self.web3_client.neg_risk_adapter_address if neg_risk 
+            self.web3_client.neg_risk_adapter_address if neg_risk
             else self.web3_client.exchange_address
         )
-        
-        # Get the correct wallet address based on signature_type
-        wallet_address = self._get_wallet_address()
-        wallet_type = "EOA" if self.signature_type == 0 else "Proxy"
+
+        # Get the correct wallet address (automatically correct for EOA/Proxy)
+        wallet_address = self.wallet.api_address
+        wallet_type = "EOA" if self.wallet.signature_type == 0 else "Proxy"
         logger.info(f"Checking approval for {wallet_type} wallet: {wallet_address}")
         logger.info(f"Operator: {operator}")
         
@@ -558,7 +535,7 @@ class OrderService:
             self.web3_client.account.address
         )
         
-        if self.signature_type == 0:
+        if self.wallet.signature_type == 0:
             # EOA mode - call setApprovalForAll directly
             logger.info("EOA mode: sending approval directly")
             txn = self.web3_client.conditional_tokens.functions.setApprovalForAll(

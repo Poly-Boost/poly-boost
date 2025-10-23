@@ -3,8 +3,8 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Card, Select, Statistic, Row, Col, Tabs, Typography, Spin, message } from 'antd';
-import { WalletOutlined, DollarOutlined, LineChartOutlined } from '@ant-design/icons';
+import { Card, Select, Statistic, Row, Col, Tabs, Typography, Spin, message, Button } from 'antd';
+import { WalletOutlined, DollarOutlined, LineChartOutlined, ReloadOutlined } from '@ant-design/icons';
 import { apiClient } from '../../api/client';
 import { PositionList } from '../../components/PositionList';
 import { OrderList } from '../../components/OrderList';
@@ -14,11 +14,17 @@ import type { ConfigWallet, PositionSummary } from '../../types';
 const { Title } = Typography;
 const { Option } = Select;
 
+const SELECTED_WALLET_KEY = 'poly-boost-selected-wallet';
+
 export const TradersPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
+  const [ordersLoading, setOrdersLoading] = useState(false);
+  const [activitiesLoading, setActivitiesLoading] = useState(false);
   const [wallets, setWallets] = useState<ConfigWallet[]>([]);
   const [selectedWallet, setSelectedWallet] = useState<string>('');
   const [positionData, setPositionData] = useState<PositionSummary | null>(null);
+  const [orders, setOrders] = useState<any[]>([]);
+  const [activities, setActivities] = useState<any[]>([]);
 
   useEffect(() => {
     loadWallets();
@@ -35,10 +41,23 @@ export const TradersPage: React.FC = () => {
       const configWallets = await apiClient.getConfigWallets();
       setWallets(configWallets);
 
-      // Auto-select first monitored wallet
+      // Try to restore previously selected wallet from localStorage
+      const savedWallet = localStorage.getItem(SELECTED_WALLET_KEY);
+
+      if (savedWallet) {
+        // Check if saved wallet still exists in config
+        const walletExists = configWallets.find((w: any) => w.address === savedWallet);
+        if (walletExists) {
+          setSelectedWallet(savedWallet);
+          return;
+        }
+      }
+
+      // If no saved wallet or saved wallet doesn't exist, auto-select first monitored wallet
       const firstMonitored = configWallets.find((w: any) => w.type === 'monitored');
       if (firstMonitored) {
         setSelectedWallet(firstMonitored.address);
+        localStorage.setItem(SELECTED_WALLET_KEY, firstMonitored.address);
       }
     } catch (error) {
       console.error('Failed to load wallets:', error);
@@ -60,9 +79,56 @@ export const TradersPage: React.FC = () => {
     }
   };
 
+  const loadOrders = async () => {
+    if (!selectedWallet) return;
+    setOrdersLoading(true);
+    try {
+      // TODO: Add API call when orders endpoint is ready
+      // const ordersData = await apiClient.getOrders(selectedWallet);
+      // setOrders(ordersData);
+      console.log('Loading orders for wallet:', selectedWallet);
+    } catch (error) {
+      console.error('Failed to load orders:', error);
+      message.error('Failed to load orders');
+    } finally {
+      setOrdersLoading(false);
+    }
+  };
+
+  const loadActivities = async () => {
+    if (!selectedWallet) return;
+    setActivitiesLoading(true);
+    try {
+      // TODO: Add API call when activities endpoint is ready
+      // const activitiesData = await apiClient.getActivities(selectedWallet);
+      // setActivities(activitiesData);
+      console.log('Loading activities for wallet:', selectedWallet);
+    } catch (error) {
+      console.error('Failed to load activities:', error);
+      message.error('Failed to load activities');
+    } finally {
+      setActivitiesLoading(false);
+    }
+  };
+
   const handleWalletChange = (value: string) => {
     setSelectedWallet(value);
+    // Save to localStorage when user changes wallet
+    localStorage.setItem(SELECTED_WALLET_KEY, value);
   };
+
+  const handleRefresh = async () => {
+    if (!selectedWallet) return;
+
+    // Refresh all data
+    await Promise.all([
+      loadWalletData(selectedWallet),
+      loadOrders(),
+      loadActivities(),
+    ]);
+  };
+
+  const isAnyLoading = loading || ordersLoading || activitiesLoading;
 
   const selectedWalletInfo = wallets.find(w => w.address === selectedWallet);
 
@@ -70,20 +136,30 @@ export const TradersPage: React.FC = () => {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <Title level={2}>Traders Dashboard</Title>
-        <Select
-          style={{ width: 400 }}
-          placeholder="Select a wallet"
-          value={selectedWallet}
-          onChange={handleWalletChange}
-          loading={wallets.length === 0}
-        >
-          {wallets.map((wallet) => (
-            <Option key={wallet.address} value={wallet.address}>
-              {wallet.name} - {wallet.address.substring(0, 8)}...{wallet.address.substring(wallet.address.length - 6)}
-              {wallet.type === 'monitored' && ' (Monitored)'}
-            </Option>
-          ))}
-        </Select>
+        <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
+          <Button
+            icon={<ReloadOutlined />}
+            onClick={handleRefresh}
+            loading={isAnyLoading}
+            disabled={!selectedWallet}
+          >
+            Refresh All
+          </Button>
+          <Select
+            style={{ width: 400 }}
+            placeholder="Select a wallet"
+            value={selectedWallet}
+            onChange={handleWalletChange}
+            loading={wallets.length === 0}
+          >
+            {wallets.map((wallet) => (
+              <Option key={wallet.address} value={wallet.address}>
+                {wallet.name} - {wallet.address.substring(0, 8)}...{wallet.address.substring(wallet.address.length - 6)}
+                {wallet.type === 'monitored' && ' (Monitored)'}
+              </Option>
+            ))}
+          </Select>
+        </div>
       </div>
 
       {selectedWallet && (
@@ -149,8 +225,8 @@ export const TradersPage: React.FC = () => {
                   label: 'Orders',
                   children: (
                     <OrderList
-                      orders={[]}
-                      loading={false}
+                      orders={orders}
+                      loading={ordersLoading}
                     />
                   ),
                 },
@@ -159,8 +235,8 @@ export const TradersPage: React.FC = () => {
                   label: 'Activity History',
                   children: (
                     <ActivityList
-                      activities={[]}
-                      loading={false}
+                      activities={activities}
+                      loading={activitiesLoading}
                     />
                   ),
                 },

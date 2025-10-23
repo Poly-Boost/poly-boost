@@ -6,7 +6,7 @@ from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException
 
 from poly_boost.services.order_service import OrderService
-from poly_boost.api.dependencies import get_order_service_for_wallet
+from poly_boost.api.dependencies import get_order_service
 from poly_boost.api.schemas.order_schemas import (
     MarketSellRequest,
     LimitSellRequest,
@@ -37,7 +37,7 @@ async def sell_position_market(
     - **amount**: Amount to sell (omit or null to sell all available balance)
     - **order_type**: FOK (Fill or Kill) or GTC (Good Till Cancel)
     """
-    order_service = get_order_service_for_wallet(wallet_address)
+    order_service = get_order_service(wallet_address)
     try:
         # Convert order type string to enum
         order_type_enum = OrderType.FOK if request.order_type == "FOK" else OrderType.GTC
@@ -66,7 +66,7 @@ async def sell_position_limit(
     - **amount**: Amount to sell (omit or null to sell all available balance)
     - **order_type**: GTC (Good Till Cancel) or GTD (Good Till Date)
     """
-    order_service = get_order_service_for_wallet(wallet_address)
+    order_service = get_order_service(wallet_address)
     try:
         # Convert order type string to enum
         order_type_enum = OrderType.GTC if request.order_type == "GTC" else OrderType.GTD
@@ -95,7 +95,7 @@ async def buy_position_market(
     - **amount**: Amount to buy
     - **order_type**: FOK (Fill or Kill) or GTC (Good Till Cancel)
     """
-    order_service = get_order_service_for_wallet(wallet_address)
+    order_service = get_order_service(wallet_address)
     try:
         # Convert order type string to enum
         order_type_enum = OrderType.FOK if request.order_type == "FOK" else OrderType.GTC
@@ -124,7 +124,7 @@ async def buy_position_limit(
     - **amount**: Amount to buy
     - **order_type**: GTC (Good Till Cancel) or GTD (Good Till Date)
     """
-    order_service = get_order_service_for_wallet(wallet_address)
+    order_service = get_order_service(wallet_address)
     try:
         # Convert order type string to enum
         order_type_enum = OrderType.GTC if request.order_type == "GTC" else OrderType.GTD
@@ -153,7 +153,7 @@ async def claim_rewards(
     - **amounts**: List of amounts to redeem [outcome1_amount, outcome2_amount]
     - **token_ids**: (Optional) List of token IDs [token1_id, token2_id]. If provided, actual balances will be queried from chain.
     """
-    order_service = get_order_service_for_wallet(wallet_address)
+    order_service = get_order_service(wallet_address)
     try:
         result = order_service.claim_rewards(
             condition_id=request.condition_id,
@@ -182,7 +182,7 @@ async def get_orders(
     - **condition_id**: Filter by condition ID  
     - **token_id**: Filter by token ID
     """
-    order_service = get_order_service_for_wallet(wallet_address)
+    order_service = get_order_service(wallet_address)
     try:
         orders = order_service.get_orders(
             order_id=order_id,
@@ -205,7 +205,7 @@ async def cancel_order(
     - **wallet_address**: Wallet address to use for the operation
     - **order_id**: Order ID to cancel
     """
-    order_service = get_order_service_for_wallet(wallet_address)
+    order_service = get_order_service(wallet_address)
     try:
         result = order_service.cancel_order(request.order_id)
         return CancelOrderResponse(**result)
@@ -222,7 +222,7 @@ async def cancel_all_orders(
     
     - **wallet_address**: Wallet address to use for the operation
     """
-    order_service = get_order_service_for_wallet(wallet_address)
+    order_service = get_order_service(wallet_address)
     try:
         result = order_service.cancel_all_orders()
         return CancelOrderResponse(**result)
