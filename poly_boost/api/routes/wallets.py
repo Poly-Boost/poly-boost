@@ -46,16 +46,29 @@ async def get_wallet_balance(
         wallet_address: Wallet address
 
     Returns:
-        Balance information
+        Balance information (returns null balance on error instead of throwing)
     """
     try:
         balance = wallet_service.get_balance(wallet_address)
         return {
             "wallet_address": wallet_address,
-            "balance": float(balance)
+            "balance": float(balance),
+            "success": True,
+            "error": None
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # Log error but return success response with null balance
+        # This ensures position list is not affected by balance query failures
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Failed to fetch balance for {wallet_address}: {e}")
+
+        return {
+            "wallet_address": wallet_address,
+            "balance": None,
+            "success": False,
+            "error": str(e)
+        }
 
 
 @router.get("/")

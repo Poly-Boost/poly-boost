@@ -596,7 +596,7 @@ class OrderService:
         token_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
-        Get active orders.
+        Get active orders with market names.
 
         Args:
             order_id: Filter by order ID
@@ -604,7 +604,7 @@ class OrderService:
             token_id: Filter by token ID
 
         Returns:
-            List of active orders
+            List of active orders with market_name field added
 
         Raises:
             Exception: If query fails
@@ -621,7 +621,33 @@ class OrderService:
                 token_id=token_id
             )
 
-            return [order.model_dump() for order in orders]
+            # Convert to dict and enrich with market names
+            orders_data = []
+            market_cache = {}  # Cache to avoid duplicate API calls
+
+            for order in orders:
+                order_dict = order.model_dump()
+
+                # Get market name from cache or API
+                cond_id = order_dict.get('condition_id')
+                if cond_id:
+                    if cond_id not in market_cache:
+                        try:
+                            market = self.clob_client.get_market(cond_id)
+                            market_cache[cond_id] = market.question
+                            logger.debug(f"Fetched market name for {cond_id}: {market.question}")
+                        except Exception as e:
+                            logger.warning(f"Failed to fetch market name for {cond_id}: {e}")
+                            market_cache[cond_id] = None
+
+                    order_dict['market_name'] = market_cache[cond_id]
+                else:
+                    order_dict['market_name'] = None
+
+                orders_data.append(order_dict)
+
+            logger.info(f"Returned {len(orders_data)} orders with market names")
+            return orders_data
 
         except Exception as e:
             logger.error(f"Failed to get orders: {e}")
@@ -681,4 +707,50 @@ class OrderService:
 
         except Exception as e:
             logger.error(f"Failed to cancel all orders: {e}")
+            raise
+
+    def get_trade_history(
+        self,
+        condition_id: Optional[str] = None,
+        token_id: Optional[str] = None,
+        trade_id: Optional[str] = None,
+        before: Optional[Any] = None,
+        after: Optional[Any] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Get trade history for the wallet.
+
+        Args:
+            condition_id: Filter by condition ID
+            token_id: Filter by token ID
+            trade_id: Filter by specific trade ID
+            before: Get trades before this timestamp (datetime object)
+            after: Get trades after this timestamp (datetime object)
+
+        Returns:
+            List of trade records
+
+        Raises:
+            Exception: If query fails
+        """
+        try:
+            logger.info(
+                f"Getting trade history for wallet {self.wallet.name}: "
+                f"condition_id={condition_id}, token_id={token_id}, trade_id={trade_id}"
+            )
+
+            trades = self.clob_client.get_trades(
+                condition_id=condition_id,
+                token_id=token_id,
+                trade_id=trade_id,
+                before=before,
+                after=after
+            )
+
+            logger.info(f"Found {len(trades)} trades for {self.wallet.name}")
+
+            return [trade.model_dump() for trade in trades]
+
+        except Exception as e:
+            logger.error(f"Failed to get trade history: {e}")
             raise

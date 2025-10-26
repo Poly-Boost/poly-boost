@@ -61,32 +61,35 @@ class WalletManager:
             f"(api_address={wallet.api_address}, signature_type={wallet.signature_type})"
         )
 
-    def get(self, address: str) -> Optional[Wallet]:
+    def get(self, identifier: str) -> Optional[Wallet]:
         """
-        Get wallet by address (smart lookup).
+        Get wallet by identifier (smart lookup).
 
-        Supports multiple address formats:
-        - api_address (most common)
-        - eoa_address (for proxy wallets)
-        - proxy_address (same as api_address for proxy wallets)
+        The identifier can be:
+        - EOA address
+        - Proxy address
+        - Wallet name
+
+        This method iterates through all registered wallets and uses each wallet's
+        matches_identifier() method to find a match. This ensures that the correct
+        wallet is found regardless of which address format the user provides.
 
         Args:
-            address: Address to lookup (case-insensitive)
+            identifier: Address or name to lookup (case-insensitive)
 
         Returns:
             Wallet instance if found, None otherwise
         """
-        addr_lower = address.lower()
-
-        # Try api_address first (most common case)
-        wallet = self._wallets.get(addr_lower)
+        # Fast path: try api_address first (most common case)
+        identifier_lower = identifier.lower()
+        wallet = self._wallets.get(identifier_lower)
         if wallet:
             return wallet
 
-        # Try eoa_address (handles proxy wallets)
-        wallet = self._eoa_to_wallet.get(addr_lower)
-        if wallet:
-            return wallet
+        # Slow path: iterate through all wallets and check if any matches
+        for wallet in self._wallets.values():
+            if wallet.matches_identifier(identifier):
+                return wallet
 
         return None
 

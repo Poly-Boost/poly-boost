@@ -182,30 +182,36 @@ export const PositionList: React.FC<PositionListProps> = ({ positions, loading, 
       dataIndex: 'size',
       key: 'size',
       render: (size: number) => size?.toFixed(2) || '0.00',
+      sorter: (a, b) => (a.size || 0) - (b.size || 0),
     },
     {
       title: 'Avg Price',
       dataIndex: 'avgPrice',
       key: 'avgPrice',
       render: (price: number) => `$${price?.toFixed(4) || '0.0000'}`,
+      sorter: (a, b) => (a.avgPrice || 0) - (b.avgPrice || 0),
     },
     {
       title: 'Current Price',
       dataIndex: 'curPrice',
       key: 'curPrice',
       render: (price: number) => `$${price?.toFixed(4) || '0.0000'}`,
+      sorter: (a, b) => (a.curPrice || 0) - (b.curPrice || 0),
     },
     {
       title: 'Initial Value',
       dataIndex: 'initialValue',
       key: 'initialValue',
       render: (value: number) => `$${value?.toFixed(2) || '0.00'}`,
+      sorter: (a, b) => (a.initialValue || 0) - (b.initialValue || 0),
     },
     {
       title: 'Current Value',
       dataIndex: 'currentValue',
       key: 'currentValue',
       render: (value: number) => `$${value?.toFixed(2) || '0.00'}`,
+      sorter: (a, b) => (a.currentValue || 0) - (b.currentValue || 0),
+      defaultSortOrder: 'descend',
     },
     {
       title: 'Cash PnL',
@@ -216,6 +222,7 @@ export const PositionList: React.FC<PositionListProps> = ({ positions, loading, 
         const color = pnl >= 0 ? 'green' : 'red';
         return <Text style={{ color }}>{pnl >= 0 ? '+' : ''}${pnl.toFixed(4)}</Text>;
       },
+      sorter: (a, b) => (a.cashPnl || 0) - (b.cashPnl || 0),
     },
     {
       title: 'PnL %',
@@ -223,10 +230,11 @@ export const PositionList: React.FC<PositionListProps> = ({ positions, loading, 
       key: 'percentPnl',
       render: (pnl: number) => {
         if (pnl === undefined || pnl === null) return 'N/A';
-        const pnlPercent = pnl * 100; // Convert decimal to percentage
-        const color = pnlPercent >= 0 ? 'green' : 'red';
-        return <Text style={{ color }}>{pnlPercent >= 0 ? '+' : ''}{pnlPercent.toFixed(2)}%</Text>;
+        // Backend already returns percentage (not decimal), so no need to multiply by 100
+        const color = pnl >= 0 ? 'green' : 'red';
+        return <Text style={{ color }}>{pnl >= 0 ? '+' : ''}{pnl.toFixed(2)}%</Text>;
       },
+      sorter: (a, b) => (a.percentPnl || 0) - (b.percentPnl || 0),
     },
     {
       title: 'Actions',
@@ -284,7 +292,11 @@ export const PositionList: React.FC<PositionListProps> = ({ positions, loading, 
         dataSource={positions}
         loading={loading}
         rowKey={(record) => record.asset || record.conditionId || ''}
-        pagination={{ pageSize: 10 }}
+        pagination={{
+          defaultPageSize: 10,
+          showSizeChanger: true,
+          pageSizeOptions: ['10', '20', '50', '100'],
+        }}
         scroll={{ x: 1500 }}
       />
       

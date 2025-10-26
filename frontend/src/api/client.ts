@@ -106,6 +106,16 @@ class ApiClient {
   }
 
   // Orders API
+  async getActiveOrders(walletAddress: string, params?: { order_id?: string; condition_id?: string; token_id?: string }) {
+    const response = await this.client.get(`/orders/${walletAddress}`, { params });
+    return response.data;
+  }
+
+  async getTradeHistory(walletAddress: string, params?: { condition_id?: string; token_id?: string; trade_id?: string }) {
+    const response = await this.client.get(`/orders/${walletAddress}/history`, { params });
+    return response.data;
+  }
+
   async marketSell(walletAddress: string, tokenId: string, amount: number | null, orderType: string = 'FOK') {
     const response = await this.client.post(`/orders/${walletAddress}/sell/market`, {
       token_id: tokenId,
@@ -131,6 +141,28 @@ class ApiClient {
       amounts: amounts,
       token_ids: tokenIds,
     });
+    return response.data;
+  }
+
+  // Activity API
+  async getActivitySummary(walletAddress: string, params?: { limit?: number }) {
+    const response = await this.client.get(`/activity/${walletAddress}`, { params });
+    return response.data;
+  }
+
+  async getActivityList(
+    walletAddress: string,
+    params?: {
+      limit?: number;
+      offset?: number;
+      condition_id?: string;
+      activity_type?: string;
+      side?: string;
+      sort_by?: string;
+      sort_direction?: string;
+    }
+  ) {
+    const response = await this.client.get(`/activity/${walletAddress}/list`, { params });
     return response.data;
   }
 }

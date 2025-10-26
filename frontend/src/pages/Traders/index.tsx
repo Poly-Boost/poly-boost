@@ -23,8 +23,12 @@ export const TradersPage: React.FC = () => {
   const [wallets, setWallets] = useState<ConfigWallet[]>([]);
   const [selectedWallet, setSelectedWallet] = useState<string>('');
   const [positionData, setPositionData] = useState<PositionSummary | null>(null);
+  const [balance, setBalance] = useState<number | null>(null);
   const [orders, setOrders] = useState<any[]>([]);
   const [activities, setActivities] = useState<any[]>([]);
+  const [currentTab, setCurrentTab] = useState<string>('positions');
+  const [ordersLoaded, setOrdersLoaded] = useState(false);
+  const [activitiesLoaded, setActivitiesLoaded] = useState(false);
 
   useEffect(() => {
     loadWallets();
@@ -33,6 +37,11 @@ export const TradersPage: React.FC = () => {
   useEffect(() => {
     if (selectedWallet) {
       loadWalletData(selectedWallet);
+      // Reset load states when wallet changes
+      setOrdersLoaded(false);
+      setActivitiesLoaded(false);
+      setOrders([]);
+      setActivities([]);
     }
   }, [selectedWallet]);
 
@@ -68,12 +77,41 @@ export const TradersPage: React.FC = () => {
   const loadWalletData = async (address: string) => {
     setLoading(true);
     try {
-      // Load positions
-      const positions = await apiClient.getPositions(address);
-      setPositionData(positions);
+      // Load positions and balance in parallel, but handle errors independently
+      const [positionsResult, balanceResult] = await Promise.allSettled([
+        apiClient.getPositions(address),
+        apiClient.getWalletBalance(address),
+      ]);
+
+      // Handle positions result
+      if (positionsResult.status === 'fulfilled') {
+        setPositionData(positionsResult.value);
+      } else {
+        console.error('Failed to load positions:', positionsResult.reason);
+        message.error('Failed to load positions');
+        setPositionData(null);
+      }
+
+      // Handle balance result (don't fail if balance query fails)
+      if (balanceResult.status === 'fulfilled') {
+        const balanceData = balanceResult.value;
+
+        // Check if balance query was successful (backend now returns success flag)
+        if (balanceData.success && balanceData.balance !== null) {
+          setBalance(balanceData.balance);
+        } else {
+          console.warn('Balance query failed:', balanceData.error || 'Unknown error');
+          message.warning('Balance unavailable for this wallet');
+          setBalance(null);
+        }
+      } else {
+        console.error('Failed to load balance:', balanceResult.reason);
+        message.warning('Failed to load balance (positions still available)');
+        setBalance(null);
+      }
     } catch (error) {
-      console.error('Failed to load wallet data:', error);
-      message.error('Failed to load wallet data');
+      console.error('Unexpected error loading wallet data:', error);
+      message.error('Unexpected error occurred');
     } finally {
       setLoading(false);
     }
@@ -83,13 +121,15 @@ export const TradersPage: React.FC = () => {
     if (!selectedWallet) return;
     setOrdersLoading(true);
     try {
-      // TODO: Add API call when orders endpoint is ready
-      // const ordersData = await apiClient.getOrders(selectedWallet);
-      // setOrders(ordersData);
-      console.log('Loading orders for wallet:', selectedWallet);
+      console.log('Loading active orders for wallet:', selectedWallet);
+      const ordersData = await apiClient.getActiveOrders(selectedWallet);
+      setOrders(ordersData);
+      setOrdersLoaded(true);
+      console.log('Loaded', ordersData.length, 'active orders');
     } catch (error) {
       console.error('Failed to load orders:', error);
-      message.error('Failed to load orders');
+      message.error('Failed to load active orders');
+      setOrders([]);
     } finally {
       setOrdersLoading(false);
     }
@@ -99,13 +139,18 @@ export const TradersPage: React.FC = () => {
     if (!selectedWallet) return;
     setActivitiesLoading(true);
     try {
-      // TODO: Add API call when activities endpoint is ready
-      // const activitiesData = await apiClient.getActivities(selectedWallet);
-      // setActivities(activitiesData);
       console.log('Loading activities for wallet:', selectedWallet);
+      const activitiesData = await apiClient.getActivityList(selectedWallet, {
+        limit: 100,
+        sort_direction: 'DESC'
+      });
+      setActivities(activitiesData);
+      setActivitiesLoaded(true);
+      console.log('Loaded', activitiesData.length, 'activities');
     } catch (error) {
       console.error('Failed to load activities:', error);
       message.error('Failed to load activities');
+      setActivities([]);
     } finally {
       setActivitiesLoading(false);
     }
@@ -120,17 +165,35 @@ export const TradersPage: React.FC = () => {
   const handleRefresh = async () => {
     if (!selectedWallet) return;
 
-    // Refresh all data
-    await Promise.all([
-      loadWalletData(selectedWallet),
-      loadOrders(),
-      loadActivities(),
-    ]);
+    // Refresh based on current tab
+    if (currentTab === 'positions') {
+      await loadWalletData(selectedWallet);
+    } else if (currentTab === 'orders') {
+      await loadOrders();
+    } else if (currentTab === 'activities') {
+      await loadActivities();
+    }
+  };
+
+  const handleTabChange = (key: string) => {
+    setCurrentTab(key);
+
+    // Auto-load data when switching to a tab if not loaded yet
+    if (key === 'orders' && !ordersLoaded && !ordersLoading) {
+      loadOrders();
+    } else if (key === 'activities' && !activitiesLoaded && !activitiesLoading) {
+      loadActivities();
+    }
   };
 
   const isAnyLoading = loading || ordersLoading || activitiesLoading;
 
   const selectedWalletInfo = wallets.find(w => w.address === selectedWallet);
+
+  // Calculate total portfolio value (position value + balance)
+  // If balance is unavailable (null), only show position value
+  const totalPortfolio = (positionData?.total_value || 0) + (balance !== null ? balance : 0);
+  const isBalanceAvailable = balance !== null;
 
   return (
     <div>
@@ -164,8 +227,8 @@ export const TradersPage: React.FC = () => {
 
       {selectedWallet && (
         <>
-          <Row gutter={16} style={{ marginBottom: 24 }}>
-            <Col span={8}>
+          <Row gutter={16} style={{ marginBottom: 16 }}>
+            <Col span={24}>
               <Card>
                 <Statistic
                   title="Wallet Address"
@@ -178,10 +241,43 @@ export const TradersPage: React.FC = () => {
                 </div>
               </Card>
             </Col>
-            <Col span={8}>
+          </Row>
+          <Row gutter={16} style={{ marginBottom: 24 }}>
+            <Col span={6}>
               <Card>
                 <Statistic
-                  title="Total Position Value"
+                  title={isBalanceAvailable ? "Total Portfolio" : "Total Portfolio (Position Only)"}
+                  value={totalPortfolio}
+                  precision={2}
+                  prefix={<DollarOutlined />}
+                  suffix="USDC"
+                  valueStyle={{ color: '#722ed1', fontSize: '24px', fontWeight: 'bold' }}
+                  loading={loading}
+                />
+                {!isBalanceAvailable && !loading && (
+                  <div style={{ fontSize: '12px', color: '#ff9800', marginTop: '8px' }}>
+                    Balance unavailable - showing positions only
+                  </div>
+                )}
+              </Card>
+            </Col>
+            <Col span={6}>
+              <Card>
+                <Statistic
+                  title="USDC Balance"
+                  value={balance !== null ? balance : 0}
+                  precision={2}
+                  prefix={<DollarOutlined />}
+                  suffix={balance !== null ? "USDC" : "(unavailable)"}
+                  valueStyle={{ color: balance !== null ? '#1890ff' : '#999' }}
+                  loading={loading}
+                />
+              </Card>
+            </Col>
+            <Col span={6}>
+              <Card>
+                <Statistic
+                  title="Position Value"
                   value={positionData?.total_value || 0}
                   precision={2}
                   prefix={<DollarOutlined />}
@@ -190,7 +286,7 @@ export const TradersPage: React.FC = () => {
                 />
               </Card>
             </Col>
-            <Col span={8}>
+            <Col span={6}>
               <Card>
                 <Statistic
                   title="Active Positions"
@@ -203,7 +299,8 @@ export const TradersPage: React.FC = () => {
 
           <Card>
             <Tabs
-              defaultActiveKey="positions"
+              activeKey={currentTab}
+              onChange={handleTabChange}
               items={[
                 {
                   key: 'positions',

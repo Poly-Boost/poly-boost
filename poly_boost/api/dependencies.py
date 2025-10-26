@@ -21,6 +21,7 @@ from poly_boost.services.position_service import PositionService
 from poly_boost.services.trading_service import TradingService
 from poly_boost.services.wallet_service import WalletService
 from poly_boost.services.order_service import OrderService
+from poly_boost.services.activity_service import ActivityService
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,7 @@ _client_factory: Optional[ClientFactory] = None
 _position_service: Optional[PositionService] = None
 _trading_service: Optional[TradingService] = None
 _wallet_service: Optional[WalletService] = None
+_activity_service: Optional[ActivityService] = None
 
 # Cache for order services per wallet (indexed by api_address)
 _order_service_cache: Dict[str, OrderService] = {}
@@ -45,7 +47,7 @@ def initialize_services():
     This should be called once when the FastAPI app starts.
     """
     global _config, _activity_queue, _wallet_manager, _client_factory
-    global _position_service, _trading_service, _wallet_service
+    global _position_service, _trading_service, _wallet_service, _activity_service
 
     # Load configuration
     _config = load_config()
@@ -109,10 +111,27 @@ def initialize_services():
     data_client = PolymarketDataClient()
     data_client.client = httpx.Client(**client_kwargs)
 
-    # Initialize services
-    _position_service = PositionService(legacy_clob_client, data_client)
+    # Get Polygon RPC URL for on-chain queries
+    polygon_rpc_config = _config.get('polygon_rpc', {})
+    polygon_rpc_url = polygon_rpc_config.get('url', 'https://polygon-rpc.com')
+
+    # Initialize services with WalletManager injection
+    _position_service = PositionService(
+        legacy_clob_client,
+        data_client,
+        wallet_manager=_wallet_manager  # Inject WalletManager for wallet resolution
+    )
     _trading_service = TradingService(_activity_queue)
-    _wallet_service = WalletService(legacy_clob_client, _wallet_manager)
+    _wallet_service = WalletService(
+        legacy_clob_client,
+        wallet_manager=_wallet_manager,
+        client_factory=_client_factory,  # Inject ClientFactory for wallet-specific clients
+        polygon_rpc_url=polygon_rpc_url  # For on-chain balance queries
+    )
+    _activity_service = ActivityService(
+        data_client,
+        wallet_manager=_wallet_manager  # Inject WalletManager for wallet resolution
+    )
 
     logger.info("All services initialized successfully")
 
@@ -164,6 +183,13 @@ def get_client_factory() -> ClientFactory:
     if _client_factory is None:
         raise RuntimeError("Services not initialized. Call initialize_services() first.")
     return _client_factory
+
+
+def get_activity_service() -> ActivityService:
+    """Get activity service instance."""
+    if _activity_service is None:
+        raise RuntimeError("Services not initialized. Call initialize_services() first.")
+    return _activity_service
 
 
 def get_order_service(wallet_address: str) -> OrderService:

@@ -7,7 +7,7 @@ Run with: uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from poly_boost.api.routes import positions, trading, wallets, config, orders
+from poly_boost.api.routes import positions, trading, wallets, config, orders, activity
 from poly_boost.api.dependencies import initialize_services
 
 
@@ -56,6 +56,7 @@ app.include_router(trading.router)
 app.include_router(wallets.router)
 app.include_router(config.router)
 app.include_router(orders.router)
+app.include_router(activity.router)
 
 
 if __name__ == "__main__":

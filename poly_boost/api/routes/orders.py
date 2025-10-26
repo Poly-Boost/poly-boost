@@ -219,12 +219,41 @@ async def cancel_all_orders(
 ) -> CancelOrderResponse:
     """
     Cancel all active orders.
-    
+
     - **wallet_address**: Wallet address to use for the operation
     """
     order_service = get_order_service(wallet_address)
     try:
         result = order_service.cancel_all_orders()
         return CancelOrderResponse(**result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{wallet_address}/history", response_model=List[Dict[str, Any]])
+async def get_trade_history(
+    wallet_address: str,
+    condition_id: Optional[str] = None,
+    token_id: Optional[str] = None,
+    trade_id: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    Get trade history for a wallet.
+
+    - **wallet_address**: Wallet address to query trade history for
+
+    Query parameters:
+    - **condition_id**: Filter by condition ID
+    - **token_id**: Filter by token ID
+    - **trade_id**: Filter by specific trade ID
+    """
+    order_service = get_order_service(wallet_address)
+    try:
+        trades = order_service.get_trade_history(
+            condition_id=condition_id,
+            token_id=token_id,
+            trade_id=trade_id
+        )
+        return trades
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

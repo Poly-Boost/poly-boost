@@ -81,6 +81,24 @@ class Wallet(ABC):
         """
         pass
 
+    @abstractmethod
+    def matches_identifier(self, identifier: str) -> bool:
+        """
+        Check if this wallet matches the given identifier.
+
+        The identifier could be:
+        - EOA address
+        - Proxy address
+        - Wallet name
+
+        Args:
+            identifier: Address or name to match (case-insensitive)
+
+        Returns:
+            True if this wallet matches the identifier
+        """
+        pass
+
     def __repr__(self):
         return f"<{self.__class__.__name__} name='{self.name}' api_address={self.api_address}>"
 
@@ -132,6 +150,18 @@ class EOAWallet(Wallet):
 
     def get_private_key(self) -> Optional[str]:
         return self._private_key
+
+    def matches_identifier(self, identifier: str) -> bool:
+        """
+        EOA wallet matches:
+        - Its EOA address (case-insensitive)
+        - Its wallet name (case-insensitive)
+        """
+        identifier_lower = identifier.lower()
+        return (
+            self.eoa_address.lower() == identifier_lower or
+            self.name.lower() == identifier_lower
+        )
 
 
 class ProxyWallet(Wallet):
@@ -198,6 +228,20 @@ class ProxyWallet(Wallet):
     def get_private_key(self) -> Optional[str]:
         return self._private_key
 
+    def matches_identifier(self, identifier: str) -> bool:
+        """
+        Proxy wallet matches:
+        - Its EOA address (case-insensitive)
+        - Its proxy address (case-insensitive)
+        - Its wallet name (case-insensitive)
+        """
+        identifier_lower = identifier.lower()
+        return (
+            self.eoa_address.lower() == identifier_lower or
+            self.proxy_address.lower() == identifier_lower or
+            self.name.lower() == identifier_lower
+        )
+
 
 class ReadOnlyWallet(Wallet):
     """
@@ -231,3 +275,15 @@ class ReadOnlyWallet(Wallet):
 
     def get_private_key(self) -> Optional[str]:
         return None
+
+    def matches_identifier(self, identifier: str) -> bool:
+        """
+        ReadOnly wallet matches:
+        - Its address (case-insensitive)
+        - Its wallet name (case-insensitive)
+        """
+        identifier_lower = identifier.lower()
+        return (
+            self.eoa_address.lower() == identifier_lower or
+            self.name.lower() == identifier_lower
+        )

@@ -2,16 +2,17 @@
  * Activity history component
  */
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Table, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
+import type { BackendActivity } from '../types';
 
 const { Link } = Typography;
 
 interface Activity {
   id: string;
-  type: 'TRADE' | 'DEPOSIT' | 'WITHDRAW';
+  type: 'TRADE' | 'SPLIT' | 'MERGE' | 'REDEEM' | 'REWARD' | 'CONVERSION';
   market?: string;
   outcome?: string;
   side?: 'BUY' | 'SELL';
@@ -22,11 +23,29 @@ interface Activity {
 }
 
 interface ActivityListProps {
-  activities: Activity[];
+  activities: BackendActivity[];
   loading?: boolean;
 }
 
+// Convert backend activity data to frontend format
+const convertBackendActivity = (activity: BackendActivity): Activity => ({
+  id: activity.transaction_hash,
+  type: activity.type,
+  market: activity.title,
+  outcome: activity.outcome,
+  side: activity.side as 'BUY' | 'SELL' | undefined,
+  amount: activity.usdc_size,
+  price: activity.price,
+  timestamp: activity.timestamp,
+  txHash: activity.transaction_hash,
+});
+
 export const ActivityList: React.FC<ActivityListProps> = ({ activities, loading }) => {
+  // Convert backend data to frontend format
+  const formattedActivities = useMemo(() => {
+    return activities.map(convertBackendActivity);
+  }, [activities]);
+
   const columns: ColumnsType<Activity> = [
     {
       title: 'Time',
@@ -43,8 +62,11 @@ export const ActivityList: React.FC<ActivityListProps> = ({ activities, loading 
       render: (type: string) => {
         let color = 'default';
         if (type === 'TRADE') color = 'blue';
-        else if (type === 'DEPOSIT') color = 'green';
-        else if (type === 'WITHDRAW') color = 'orange';
+        else if (type === 'SPLIT') color = 'purple';
+        else if (type === 'MERGE') color = 'cyan';
+        else if (type === 'REDEEM') color = 'green';
+        else if (type === 'REWARD') color = 'gold';
+        else if (type === 'CONVERSION') color = 'magenta';
         return <Tag color={color}>{type}</Tag>;
       },
     },
@@ -75,12 +97,14 @@ export const ActivityList: React.FC<ActivityListProps> = ({ activities, loading 
       dataIndex: 'price',
       key: 'price',
       render: (price?: number) => price ? `$${price.toFixed(4)}` : 'N/A',
+      sorter: (a, b) => (a.price || 0) - (b.price || 0),
     },
     {
       title: 'Amount',
       dataIndex: 'amount',
       key: 'amount',
       render: (amount: number) => `${amount.toFixed(2)} USDC`,
+      sorter: (a, b) => a.amount - b.amount,
     },
     {
       title: 'Tx Hash',
@@ -97,10 +121,14 @@ export const ActivityList: React.FC<ActivityListProps> = ({ activities, loading 
   return (
     <Table
       columns={columns}
-      dataSource={activities}
+      dataSource={formattedActivities}
       loading={loading}
       rowKey="id"
-      pagination={{ pageSize: 15 }}
+      pagination={{
+        defaultPageSize: 15,
+        showSizeChanger: true,
+        pageSizeOptions: ['10', '20', '50', '100'],
+      }}
     />
   );
 };
