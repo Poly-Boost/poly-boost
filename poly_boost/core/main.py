@@ -7,12 +7,21 @@ Initializes monitoring and copy trading components based on configuration.
 import logging
 import signal
 import sys
+from typing import Optional
 
+import httpx
+from polymarket_apis.clients.data_client import PolymarketDataClient
+
+from poly_boost.core.client_factory import ClientFactory
 from poly_boost.core.config_loader import load_config
-from poly_boost.core.logger import setup_logger
-from poly_boost.core.wallet_monitor import WalletMonitor
-from poly_boost.core.in_memory_activity_queue import InMemoryActivityQueue
 from poly_boost.core.copy_trader import CopyTrader
+from poly_boost.core.in_memory_activity_queue import InMemoryActivityQueue
+from poly_boost.core.logger import setup_logger
+from poly_boost.core.self_redeem_monitor import SelfRedeemMonitor
+from poly_boost.core.wallet_manager import WalletManager
+from poly_boost.core.wallet_monitor import WalletMonitor
+from poly_boost.services.order_service import OrderService
+from poly_boost.services.position_service import PositionService
 
 
 def create_activity_queue(config: dict):
@@ -41,6 +50,10 @@ def create_activity_queue(config: dict):
 
 def main():
     """Program entry point."""
+    client_factory: Optional[ClientFactory] = None
+    self_redeem_monitor: Optional[SelfRedeemMonitor] = None
+    redeem_http_client: Optional[httpx.Client] = None
+
     try:
         # Load configuration
         config = load_config("config.yaml")
@@ -56,6 +69,9 @@ def main():
         log = setup_logger(log_dir=log_dir, log_filename=log_filename, level=log_level)
         log.info("Loading configuration file...")
 
+        # Initialize wallet manager (loads user and watch wallets)
+        wallet_manager = WalletManager.from_config(config)
+
         # Extract configuration
         monitoring_config = config['monitoring']
         wallets = monitoring_config['wallets']
@@ -68,6 +84,47 @@ def main():
 
         # Extract Polygon RPC configuration
         polygon_rpc_config = config.get('polygon_rpc', {})
+
+        # Optional self-redeem monitor
+        auto_redeem_cfg = config.get('auto_redeem', {})
+        if auto_redeem_cfg.get('enabled', True):
+            log.info("Initializing self-redeem monitor...")
+            client_factory = ClientFactory(api_config)
+
+            http_client_kwargs = {
+                "timeout": timeout,
+                "verify": verify_ssl,
+                "http2": True,
+            }
+            if proxy:
+                http_client_kwargs["proxy"] = proxy
+
+            redeem_http_client = httpx.Client(**http_client_kwargs)
+            data_client = PolymarketDataClient()
+            data_client.client = redeem_http_client
+
+            position_service = PositionService(
+                clob_client=None,
+                data_client=data_client,
+                wallet_manager=wallet_manager,
+            )
+
+            def order_service_factory(wallet):
+                return OrderService(
+                    wallet=wallet,
+                    clob_client=client_factory.get_clob_client(wallet),
+                    web3_client=client_factory.get_web3_client(wallet),
+                )
+
+            self_redeem_monitor = SelfRedeemMonitor(
+                wallet_manager=wallet_manager,
+                position_svc=position_service,
+                order_svc_factory=order_service_factory,
+                cfg=config,
+            )
+            self_redeem_monitor.start()
+        else:
+            log.info("Self-redeem monitor disabled via configuration")
 
         # Create activity queue
         activity_queue = create_activity_queue(config)
@@ -115,9 +172,24 @@ def main():
             verify_ssl=verify_ssl
         )
 
+        # Auto-redeem resource cleanup helper
+        def cleanup_auto_redeem():
+            nonlocal self_redeem_monitor, client_factory, redeem_http_client
+            if self_redeem_monitor:
+                self_redeem_monitor.stop()
+                self_redeem_monitor = None
+            if client_factory:
+                client_factory.close()
+                client_factory = None
+            if redeem_http_client:
+                redeem_http_client.close()
+                redeem_http_client = None
+
         # Set up signal handler for graceful shutdown
         def signal_handler(sig, frame):
             log.info("Received exit signal, shutting down...")
+
+            cleanup_auto_redeem()
 
             # Print copy trading statistics
             for trader in copy_traders:
@@ -140,9 +212,13 @@ def main():
             signal.pause() if hasattr(signal, 'pause') else monitor.stop_event.wait(3600)
 
     except FileNotFoundError as e:
+        if 'cleanup_auto_redeem' in locals():
+            cleanup_auto_redeem()
         log.error(f"Configuration file error: {e}")
         sys.exit(1)
     except Exception as e:
+        if 'cleanup_auto_redeem' in locals():
+            cleanup_auto_redeem()
         log.error(f"Program startup failed: {e}", exc_info=True)
         sys.exit(1)
 

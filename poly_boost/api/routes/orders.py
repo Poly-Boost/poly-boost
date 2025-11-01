@@ -3,9 +3,10 @@ Order management endpoints.
 """
 
 from typing import Optional, List, Dict, Any
-from fastapi import APIRouter, Depends, HTTPException
 
-from poly_boost.services.order_service import OrderService
+from fastapi import APIRouter, HTTPException
+from polymarket_apis.types.clob_types import OrderType
+
 from poly_boost.api.dependencies import get_order_service
 from poly_boost.api.schemas.order_schemas import (
     MarketSellRequest,
@@ -18,8 +19,6 @@ from poly_boost.api.schemas.order_schemas import (
     CancelOrderRequest,
     CancelOrderResponse,
 )
-from polymarket_apis.types.clob_types import OrderType
-
 
 router = APIRouter(prefix="/orders", tags=["orders"])
 
@@ -41,7 +40,7 @@ async def sell_position_market(
     try:
         # Convert order type string to enum
         order_type_enum = OrderType.FOK if request.order_type == "FOK" else OrderType.GTC
-        
+
         result = order_service.sell_position_market(
             token_id=request.token_id,
             amount=request.amount,
@@ -70,7 +69,7 @@ async def sell_position_limit(
     try:
         # Convert order type string to enum
         order_type_enum = OrderType.GTC if request.order_type == "GTC" else OrderType.GTD
-        
+
         result = order_service.sell_position_limit(
             token_id=request.token_id,
             price=request.price,
@@ -99,7 +98,7 @@ async def buy_position_market(
     try:
         # Convert order type string to enum
         order_type_enum = OrderType.FOK if request.order_type == "FOK" else OrderType.GTC
-        
+
         result = order_service.buy_position_market(
             token_id=request.token_id,
             amount=request.amount,
@@ -128,7 +127,7 @@ async def buy_position_limit(
     try:
         # Convert order type string to enum
         order_type_enum = OrderType.GTC if request.order_type == "GTC" else OrderType.GTD
-        
+
         result = order_service.buy_position_limit(
             token_id=request.token_id,
             price=request.price,

@@ -41,6 +41,16 @@ user_wallets:
       copy_mode: "scale"  # "scale" or "allocate"
       scale_percentage: 1
 
+# Automatic redeem configuration
+auto_redeem:
+  enabled: true
+  poll_interval_seconds: 60
+  include_wallets: []        # Optional whitelist by wallet name or address
+  exclude_wallets: []        # Optional blacklist
+  max_parallel_redeems: 3
+  cool_down_seconds: 600
+  dry_run: false             # When true, log planned actions without sending transactions
+
 # API server configuration
 api:
   host: "0.0.0.0"
