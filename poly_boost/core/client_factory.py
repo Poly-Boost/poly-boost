@@ -10,6 +10,7 @@ import logging
 
 from polymarket_apis.clients.clob_client import PolymarketClobClient
 from polymarket_apis.clients.web3_client import PolymarketWeb3Client
+from polymarket_apis.clients.data_client import PolymarketDataClient
 from polymarket_apis.utilities.signing.signer import Signer
 from polymarket_apis.utilities.headers import create_level_1_headers
 from polymarket_apis.types.clob_types import ApiCreds
@@ -45,6 +46,7 @@ class ClientFactory:
         # Client caches (indexed by api_address)
         self._clob_cache: Dict[str, PolymarketClobClient] = {}
         self._web3_cache: Dict[str, PolymarketWeb3Client] = {}
+        self._data_client: Optional[PolymarketDataClient] = None
 
         # Shared HTTP client for connection pooling
         self._shared_http_client: Optional[httpx.Client] = None
@@ -101,6 +103,15 @@ class ClientFactory:
             logger.info("Shared async HTTP client created")
 
         return self._shared_async_client
+
+    # Public accessors for shared HTTP clients so other components can reuse
+    def get_http_client(self) -> httpx.Client:
+        """Public wrapper to get the shared httpx.Client with configured proxy/SSL."""
+        return self._get_http_client()
+
+    def get_async_http_client(self) -> httpx.AsyncClient:
+        """Public wrapper to get the shared httpx.AsyncClient with configured proxy/SSL."""
+        return self._get_async_http_client()
 
     def get_clob_client(self, wallet: Wallet) -> PolymarketClobClient:
         """
@@ -207,11 +218,46 @@ class ClientFactory:
             chain_id=137  # Polygon mainnet
         )
 
+        # Ensure Web3 client uses shared HTTP clients if supported by the SDK
+        if hasattr(web3_client, "client"):
+            web3_client.client = self._get_http_client()
+        if hasattr(web3_client, "async_client"):
+            web3_client.async_client = self._get_async_http_client()
+
         # Cache and return
         self._web3_cache[cache_key] = web3_client
         logger.info(f"Web3 client created for wallet '{wallet.name}'")
 
         return web3_client
+
+    def get_data_client(self) -> PolymarketDataClient:
+        """
+        Get or create shared Polymarket Data API client.
+
+        Ensures the client uses the shared HTTP clients so that proxy and
+        SSL verification settings are consistently applied.
+
+        Returns:
+            Configured PolymarketDataClient
+        """
+        if self._data_client is not None:
+            logger.debug("Using cached Data API client")
+            return self._data_client
+
+        logger.info("Creating Data API client...")
+        data_client = PolymarketDataClient()
+
+        # Attach shared HTTP clients (proxy/verify settings handled centrally)
+        data_client.client = self._get_http_client()
+        try:
+            # If SDK supports async client, attach it as well
+            data_client.async_client = self._get_async_http_client()  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+        self._data_client = data_client
+        logger.info("Data API client created")
+        return data_client
 
     def _get_api_credentials(self, wallet: Wallet, private_key: str) -> ApiCreds:
         """
@@ -285,6 +331,7 @@ class ClientFactory:
         else:
             self._clob_cache.clear()
             self._web3_cache.clear()
+            self._data_client = None
             logger.info("Cleared all cached clients")
 
     def close(self):

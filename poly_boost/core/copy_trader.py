@@ -6,6 +6,7 @@ target wallet activities and executes trades based on configured strategies.
 """
 
 import time
+from decimal import Decimal, ROUND_FLOOR, getcontext
 from functools import partial
 from typing import List, Optional, Dict, Any
 
@@ -339,7 +340,8 @@ class CopyTrader:
             target_wallet: Target wallet address
 
         Returns:
-            Calculated trade amount (USDC) with min/max limits applied
+            Calculated trade amount (USDC) with min/max limits applied.
+            Max limit is adjusted down to a price multiple when price > 0.
         """
         mode = self.strategy_config['copy_mode']
         target_value = get_trade_value(activity)
@@ -378,7 +380,23 @@ class CopyTrader:
                 f"[{self.name}] Applying maximum amount limit: "
                 f"${calculated_size:.2f} → ${max_amount:.2f}"
             )
-            calculated_size = max_amount
+            price = float(getattr(activity, 'price', 0) or 0)
+            if price > 0:
+                try:
+                    getcontext().prec = 28
+                    d_max = Decimal(str(max_amount))
+                    d_price = Decimal(str(price))
+                    units = (d_max / d_price).to_integral_value(rounding=ROUND_CEILING)
+                    adjusted = (units * d_price).quantize(Decimal('0.000001'))
+                    calculated_size = float(adjusted)
+                    log.info(
+                        f"[{self.name}] Max cap adjusted to price multiple: "
+                        f"price=${price:.4f}, max=${max_amount:.2f} -> final=${calculated_size:.6f}"
+                    )
+                except Exception:
+                    calculated_size = max_amount
+            else:
+                calculated_size = max_amount
 
         return calculated_size
 
