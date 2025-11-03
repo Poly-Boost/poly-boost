@@ -75,6 +75,8 @@ class CopyTrader:
         self.address = wallet_config['address']
         self.strategy_config = wallet_config['copy_strategy']
         self.activity_queue = activity_queue
+        # Enable flag: only perform copy trading when true
+        self.enable_copy_trade: bool = wallet_config.get('enable_copy_trade', False)
 
         # Get signature type and proxy address configuration
         self.signature_type = wallet_config.get('signature_type', 0)  # Default EOA mode
@@ -207,6 +209,12 @@ class CopyTrader:
         Args:
             target_wallet: Target wallet address
         """
+        if not self.enable_copy_trade:
+            log.info(
+                f"CopyTrader '{self.name}' copy trading disabled (enable_copy_trade=false); skipping subscribe for {target_wallet}"
+            )
+            return
+
         log.info(f"CopyTrader '{self.name}' started following wallet: {target_wallet}")
 
         # Create callback function with target wallet parameter

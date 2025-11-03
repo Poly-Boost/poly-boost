@@ -31,6 +31,7 @@ user_wallets:
     address: "0x..."
     proxy_address: "0x..."
     private_key_env: "MY_WALLET_PRIVATE_KEY"
+    enable_copy_trade: false  # When true, enable copy trading for this wallet
     signature_type: 2  # 0=EOA, 1=Polymarket proxy, 2=Browser wallet proxy
     copy_strategy:
       min_trigger_amount: 100
