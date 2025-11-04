@@ -5,13 +5,7 @@ Provides shared dependencies for API routes.
 """
 
 from typing import Optional, Dict
-from functools import lru_cache
-import os
 import logging
-
-from py_clob_client.client import ClobClient
-from polymarket_apis.clients.data_client import PolymarketDataClient
-import httpx
 
 from poly_boost.core.config_loader import load_config
 from poly_boost.core.in_memory_activity_queue import InMemoryActivityQueue
@@ -79,37 +73,9 @@ def initialize_services():
     else:
         raise NotImplementedError(f"Queue type '{queue_type}' not supported")
 
-    # Prepare httpx client kwargs for legacy services
-    proxy = api_config.get('proxy')
-    timeout = api_config.get('timeout', 30.0)
-    verify_ssl = api_config.get('verify_ssl', True)
-
-    client_kwargs = {
-        "http2": True,
-        "timeout": timeout,
-        "verify": verify_ssl
-    }
-    if proxy:
-        client_kwargs["proxy"] = proxy
-
-    # Suppress SSL warnings if verification is disabled
-    if not verify_ssl:
-        try:
-            import urllib3
-            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        except ImportError:
-            pass
-
-    # Create legacy CLOB client for backward compatibility (read-only operations)
-    legacy_clob_client = ClobClient(
-        host="https://clob.polymarket.com",
-        key="",  # Read-only operations
-        chain_id=137
-    )
-
-    # Create Data API client
-    data_client = PolymarketDataClient()
-    data_client.client = httpx.Client(**client_kwargs)
+    # Create shared clients via factory
+    legacy_clob_client = _client_factory.get_legacy_clob_client()
+    data_client = _client_factory.get_data_client()
 
     # Get Polygon RPC URL for on-chain queries
     polygon_rpc_config = _config.get('polygon_rpc', {})

@@ -324,6 +324,8 @@ export const TradersPage: React.FC = () => {
                     <OrderList
                       orders={orders}
                       loading={ordersLoading}
+                      walletAddress={selectedWallet}
+                      onCancelled={loadOrders}
                     />
                   ),
                 },

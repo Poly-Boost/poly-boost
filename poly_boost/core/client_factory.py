@@ -7,6 +7,9 @@ Handles client creation, credential management, and connection pooling.
 from typing import Dict, Optional
 import httpx
 import logging
+import requests
+
+from py_clob_client.client import ClobClient as LegacyClobClient
 
 from polymarket_apis.clients.clob_client import PolymarketClobClient
 from polymarket_apis.clients.web3_client import PolymarketWeb3Client
@@ -47,10 +50,15 @@ class ClientFactory:
         self._clob_cache: Dict[str, PolymarketClobClient] = {}
         self._web3_cache: Dict[str, PolymarketWeb3Client] = {}
         self._data_client: Optional[PolymarketDataClient] = None
+        self._legacy_clob_client: Optional[LegacyClobClient] = None
 
         # Shared HTTP client for connection pooling
         self._shared_http_client: Optional[httpx.Client] = None
         self._shared_async_client: Optional[httpx.AsyncClient] = None
+
+        # Tracking for requests patching (used by legacy client)
+        self._requests_defaults_applied: bool = False
+        self._original_requests_method = None
 
     def _get_http_client(self) -> httpx.Client:
         """
@@ -151,20 +159,20 @@ class ClientFactory:
         # Get API credentials
         creds = self._get_api_credentials(wallet, private_key)
 
-        # Determine proxy_address parameter based on wallet type
+        # Resolve the on-chain address to use for signing/funding
         if isinstance(wallet, ProxyWallet):
-            proxy_address = wallet.proxy_address
+            address = wallet.proxy_address
         else:
-            # For EOA wallets, pass the EOA address
-            proxy_address = wallet.eoa_address
+            # For EOA wallets, use the EOA address
+            address = wallet.eoa_address
 
         # Create CLOB client
         clob_client = PolymarketClobClient(
             private_key=private_key,
-            proxy_address=proxy_address,
-            signature_type=wallet.signature_type,
+            address=address,
+            creds=creds,
             chain_id=137,  # Polygon mainnet
-            creds=creds
+            signature_type=wallet.signature_type,
         )
 
         # Replace default HTTP clients with shared instances
@@ -215,7 +223,8 @@ class ClientFactory:
         # Create Web3 client
         web3_client = PolymarketWeb3Client(
             private_key=private_key,
-            chain_id=137  # Polygon mainnet
+            signature_type=wallet.signature_type,
+            chain_id=137,  # Polygon mainnet
         )
 
         # Ensure Web3 client uses shared HTTP clients if supported by the SDK
@@ -258,6 +267,59 @@ class ClientFactory:
         self._data_client = data_client
         logger.info("Data API client created")
         return data_client
+
+    def get_legacy_clob_client(self) -> LegacyClobClient:
+        """Get a shared legacy py_clob_client.ClobClient (read-only usage)."""
+        if self._legacy_clob_client is not None:
+            logger.debug("Using cached legacy CLOB client")
+            return self._legacy_clob_client
+
+        self._apply_requests_defaults()
+
+        self._legacy_clob_client = LegacyClobClient(
+            host="https://clob.polymarket.com",
+            chain_id=137,
+        )
+        logger.info("Legacy CLOB client created")
+        return self._legacy_clob_client
+
+    def _apply_requests_defaults(self) -> None:
+        """Ensure requests respects factory proxy/SSL settings for legacy clients."""
+        if self._requests_defaults_applied:
+            return
+
+        verify_ssl = self.api_config.get('verify_ssl', True)
+        proxy = self.api_config.get('proxy')
+        timeout = self.api_config.get('timeout', 30.0)
+
+        original_request = requests.Session.request
+
+        proxies_dict = None
+        if proxy:
+            proxies_dict = {
+                "http": proxy,
+                "https": proxy,
+            }
+
+        def patched_request(session, method, url, **kwargs):
+            if not verify_ssl:
+                kwargs.setdefault('verify', False)
+            if proxies_dict is not None and 'proxies' not in kwargs:
+                kwargs['proxies'] = proxies_dict
+            if timeout is not None and 'timeout' not in kwargs:
+                kwargs['timeout'] = timeout
+            return original_request(session, method, url, **kwargs)
+
+        requests.Session.request = patched_request
+        self._original_requests_method = original_request
+        self._requests_defaults_applied = True
+
+        if not verify_ssl:
+            try:
+                import urllib3
+                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            except ImportError:
+                pass
 
     def _get_api_credentials(self, wallet: Wallet, private_key: str) -> ApiCreds:
         """
@@ -332,6 +394,7 @@ class ClientFactory:
             self._clob_cache.clear()
             self._web3_cache.clear()
             self._data_client = None
+            self._legacy_clob_client = None
             logger.info("Cleared all cached clients")
 
     def close(self):
@@ -346,4 +409,14 @@ class ClientFactory:
             self._shared_async_client = None
 
         self.clear_cache()
+
+        if self._requests_defaults_applied and self._original_requests_method:
+            requests.Session.request = self._original_requests_method
+            self._original_requests_method = None
+            self._requests_defaults_applied = False
+
         logger.info("ClientFactory closed")
+
+
+
+

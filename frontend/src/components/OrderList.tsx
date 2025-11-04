@@ -2,11 +2,12 @@
  * Order list component - Displays active (open) orders
  */
 
-import React, { useMemo } from 'react';
-import { Table, Tag } from 'antd';
+import React, { useMemo, useState, useCallback } from 'react';
+import { Table, Tag, Button, Popconfirm, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 import type { BackendOpenOrder } from '../types';
+import { apiClient } from '../api/client';
 
 interface Order {
   id: string;
@@ -23,6 +24,8 @@ interface Order {
 interface OrderListProps {
   orders: BackendOpenOrder[];
   loading?: boolean;
+  walletAddress: string;
+  onCancelled?: () => void; // optional callback to refresh list after cancel
 }
 
 // Convert backend active order data to frontend order format
@@ -38,11 +41,32 @@ const convertOpenOrderToOrder = (openOrder: BackendOpenOrder): Order => ({
   createdAt: openOrder.created_at,
 });
 
-export const OrderList: React.FC<OrderListProps> = ({ orders, loading }) => {
+export const OrderList: React.FC<OrderListProps> = ({ orders, loading, walletAddress, onCancelled }) => {
   // Convert backend data to frontend format
   const formattedOrders = useMemo(() => {
     return orders.map(convertOpenOrderToOrder);
   }, [orders]);
+
+  const [cancellingMap, setCancellingMap] = useState<Record<string, boolean>>({});
+
+  const canCancel = useCallback((status: string) => {
+    // Allow cancel for orders that are not final
+    return !(status === 'FILLED' || status === 'CANCELLED');
+  }, []);
+
+  const handleCancel = useCallback(async (orderId: string) => {
+    if (!walletAddress) return;
+    try {
+      setCancellingMap((m) => ({ ...m, [orderId]: true }));
+      await apiClient.cancelOrder(walletAddress, orderId);
+      message.success('Order cancelled');
+      if (onCancelled) onCancelled();
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || 'Failed to cancel order');
+    } finally {
+      setCancellingMap((m) => ({ ...m, [orderId]: false }));
+    }
+  }, [walletAddress, onCancelled]);
 
   const columns: ColumnsType<Order> = [
     {
@@ -115,6 +139,27 @@ export const OrderList: React.FC<OrderListProps> = ({ orders, loading }) => {
         { text: 'CANCELLED', value: 'CANCELLED' },
       ],
       onFilter: (value, record) => record.status === value,
+    },
+    {
+      title: 'Action',
+      key: 'action',
+      render: (_: any, record: Order) => {
+        const disabled = !canCancel(record.status);
+        const loadingBtn = !!cancellingMap[record.id];
+        return (
+          <Popconfirm
+            title="Cancel this order?"
+            okText="Yes"
+            cancelText="No"
+            onConfirm={() => handleCancel(record.id)}
+            disabled={disabled || loadingBtn}
+          >
+            <Button danger size="small" loading={loadingBtn} disabled={disabled || loadingBtn}>
+              Cancel
+            </Button>
+          </Popconfirm>
+        );
+      },
     },
   ];
 

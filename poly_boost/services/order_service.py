@@ -379,6 +379,29 @@ class OrderService:
                     "This may fail if amounts exceed actual balance."
                 )
 
+            if token_ids:
+                filtered_amounts: List[float] = []
+                filtered_token_ids: List[Optional[str]] = []
+                for i, amount in enumerate(amounts):
+                    token_id = token_ids[i] if i < len(token_ids) else None
+                    if token_id or amount > 0:
+                        filtered_amounts.append(amount)
+                        filtered_token_ids.append(token_id)
+                    else:
+                        logger.debug(
+                            "Dropping placeholder amount at index %s (token_id=None, amount=%s)",
+                            i,
+                            amount,
+                        )
+
+                if len(filtered_amounts) != len(amounts):
+                    logger.info(
+                        "Trimmed %s placeholder amount entries with no token_id and zero balance",
+                        len(amounts) - len(filtered_amounts),
+                    )
+                    amounts = filtered_amounts
+                    token_ids = filtered_token_ids
+
             # Determine if it's a neg risk market
             # Try to get neg risk status from a token in this market
             # For simplicity, we'll default to True (most markets are neg risk)

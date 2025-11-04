@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from poly_boost.api.routes import positions, trading, wallets, config, orders, activity
-from poly_boost.api.dependencies import initialize_services
+from poly_boost.api.dependencies import initialize_services, get_client_factory
 
 
 # Create FastAPI app
@@ -32,6 +32,17 @@ app.add_middleware(
 async def startup_event():
     """Initialize services on application startup."""
     initialize_services()
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Release shared clients on application shutdown."""
+    try:
+        client_factory = get_client_factory()
+    except RuntimeError:
+        return
+
+    client_factory.close()
 
 
 @app.get("/")

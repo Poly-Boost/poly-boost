@@ -116,6 +116,19 @@ class ApiClient {
     return response.data;
   }
 
+  async cancelOrder(walletAddress: string, orderId: string) {
+    // Axios requires `data` field to send a body with DELETE
+    const response = await this.client.delete(`/orders/${walletAddress}/cancel`, {
+      data: { order_id: orderId },
+    });
+    return response.data;
+  }
+
+  async cancelAllOrders(walletAddress: string) {
+    const response = await this.client.delete(`/orders/${walletAddress}/cancel/all`);
+    return response.data;
+  }
+
   async marketSell(walletAddress: string, tokenId: string, amount: number | null, orderType: string = 'FOK') {
     const response = await this.client.post(`/orders/${walletAddress}/sell/market`, {
       token_id: tokenId,

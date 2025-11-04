@@ -12,6 +12,7 @@ from typing import Optional, List
 
 import httpx
 from polymarket_apis.clients.data_client import PolymarketDataClient
+from poly_boost.core.client_factory import ClientFactory
 
 from poly_boost.core.activity_queue import ActivityQueue
 from poly_boost.core.logger import log
@@ -35,7 +36,9 @@ class WalletMonitor:
         batch_size: int = 500,
         proxy: Optional[str] = None,
         timeout: float = 30.0,
-        verify_ssl: bool = True
+        verify_ssl: bool = True,
+        data_client: Optional[PolymarketDataClient] = None,
+        client_factory: Optional[ClientFactory] = None,
     ):
         """
         Initialize monitor with wallets and configuration.
@@ -53,27 +56,34 @@ class WalletMonitor:
         self.poll_interval = poll_interval
         self.batch_size = batch_size
         self.activity_queue = activity_queue
-        self.data_client = PolymarketDataClient()
+        # Prefer injected data_client or client_factory for unified HTTP settings
+        if data_client is not None:
+            self.data_client = data_client
+        elif client_factory is not None:
+            self.data_client = client_factory.get_data_client()
+        else:
+            # Backward-compatible construction (direct, with local settings)
+            self.data_client = PolymarketDataClient()
 
-        # Configure API client with proper timeout and SSL settings
-        client_kwargs = {
-            "timeout": timeout,  # Increase timeout to 60 seconds
-            "verify": verify_ssl
-        }
+            # Configure API client with proper timeout and SSL settings
+            client_kwargs = {
+                "timeout": timeout,
+                "verify": verify_ssl,
+            }
 
-        if proxy:
-            client_kwargs["proxy"] = proxy
+            if proxy:
+                client_kwargs["proxy"] = proxy
 
-        self.data_client.client = httpx.Client(**client_kwargs)
+            self.data_client.client = httpx.Client(**client_kwargs)
 
-        if not verify_ssl:
-            log.info("SSL verification disabled for data client")
-            # Suppress SSL warnings
-            try:
-                import urllib3
-                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-            except ImportError:
-                pass
+            if not verify_ssl:
+                log.info("SSL verification disabled for data client")
+                # Suppress SSL warnings
+                try:
+                    import urllib3
+                    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+                except ImportError:
+                    pass
 
         self.stop_event = threading.Event()
         self.executor: Optional[ThreadPoolExecutor] = None

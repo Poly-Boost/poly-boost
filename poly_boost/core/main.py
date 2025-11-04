@@ -9,9 +9,6 @@ import signal
 import sys
 from typing import Optional
 
-import httpx
-from polymarket_apis.clients.data_client import PolymarketDataClient
-
 from poly_boost.core.client_factory import ClientFactory
 from poly_boost.core.config_loader import load_config
 from poly_boost.core.copy_trader import CopyTrader
@@ -52,7 +49,6 @@ def main():
     """Program entry point."""
     client_factory: Optional[ClientFactory] = None
     self_redeem_monitor: Optional[SelfRedeemMonitor] = None
-    redeem_http_client: Optional[httpx.Client] = None
 
     try:
         # Load configuration
@@ -85,23 +81,15 @@ def main():
         # Extract Polygon RPC configuration
         polygon_rpc_config = config.get('polygon_rpc', {})
 
+        # Initialize a single ClientFactory used across components
+        client_factory = ClientFactory(api_config)
+
         # Optional self-redeem monitor
         auto_redeem_cfg = config.get('auto_redeem', {})
         if auto_redeem_cfg.get('enabled', True):
             log.info("Initializing self-redeem monitor...")
-            client_factory = ClientFactory(api_config)
-
-            http_client_kwargs = {
-                "timeout": timeout,
-                "verify": verify_ssl,
-                "http2": True,
-            }
-            if proxy:
-                http_client_kwargs["proxy"] = proxy
-
-            redeem_http_client = httpx.Client(**http_client_kwargs)
-            data_client = PolymarketDataClient()
-            data_client.client = redeem_http_client
+            # Use shared Data API client from factory
+            data_client = client_factory.get_data_client()
 
             position_service = PositionService(
                 clob_client=None,
@@ -167,23 +155,19 @@ def main():
             poll_interval=poll_interval,
             activity_queue=activity_queue,
             batch_size=batch_size,
-            proxy=proxy,
-            timeout=timeout,
-            verify_ssl=verify_ssl
+            # Unify HTTP/proxy settings via shared factory client
+            data_client=client_factory.get_data_client(),
         )
 
         # Auto-redeem resource cleanup helper
         def cleanup_auto_redeem():
-            nonlocal self_redeem_monitor, client_factory, redeem_http_client
+            nonlocal self_redeem_monitor, client_factory
             if self_redeem_monitor:
                 self_redeem_monitor.stop()
                 self_redeem_monitor = None
             if client_factory:
                 client_factory.close()
                 client_factory = None
-            if redeem_http_client:
-                redeem_http_client.close()
-                redeem_http_client = None
 
         # Set up signal handler for graceful shutdown
         def signal_handler(sig, frame):
