@@ -309,19 +309,18 @@ class OrderService:
             raise
 
     def claim_rewards(
-        self, 
-        condition_id: str, 
-        amounts: List[float],
-        token_ids: Optional[List[str]] = None
+        self,
+        condition_id: str,
+        token_id: str,
+        amount: float,
     ) -> Dict[str, Any]:
         """
         Claim rewards by redeeming positions.
 
         Args:
             condition_id: Condition ID of the resolved market
-            amounts: List of amounts to redeem [outcome1_amount, outcome2_amount]
-                    If None or 0, will query actual balance from chain
-            token_ids: Optional list of token IDs for balance query
+            token_id: Token ID to redeem
+            amount: Requested amount to redeem
 
         Returns:
             Transaction result
@@ -330,77 +329,113 @@ class OrderService:
             Exception: If redemption fails
         """
         try:
+            if amount <= 0:
+                raise ValueError("Amount must be greater than 0")
+
             logger.info(
                 f"Claiming rewards for condition_id={condition_id}, "
-                f"requested amounts={amounts}, token_ids={token_ids}"
+                f"token_id={token_id}, requested amount={amount}"
             )
 
             # Get the correct wallet address (automatically correct for EOA/Proxy)
-            from web3 import Web3
             wallet_address = self.wallet.api_address
             logger.info(
                 f"Wallet: {self.wallet.name}, signature type: {self.wallet.signature_type}, "
                 f"address: {wallet_address}"
             )
-            
-            # Query actual balances if token_ids provided
-            actual_amounts = []
-            if token_ids and any(token_ids):  # Check if token_ids is not None and has non-None values
-                logger.info(f"Token IDs provided: {token_ids}")
-                logger.info("Querying actual token balances from chain...")
-                
-                for i, token_id in enumerate(token_ids):
-                    if token_id:
-                        try:
-                            # Query balance from the correct wallet address
-                            balance = self.web3_client.get_token_balance(
-                                token_id=token_id,
-                                address=wallet_address
-                            )
-                            logger.info(f"Token {i} (ID: {token_id}): balance = {balance}")
-                            actual_amounts.append(balance)
-                        except Exception as e:
-                            logger.error(f"Failed to query balance for token {token_id}: {e}")
-                            import traceback
-                            logger.error(traceback.format_exc())
-                            # Use requested amount as fallback
-                            actual_amounts.append(amounts[i] if i < len(amounts) else 0)
-                    else:
-                        # No token_id for this position
-                        logger.info(f"Token {i}: no token_id, using requested amount {amounts[i] if i < len(amounts) else 0}")
-                        actual_amounts.append(amounts[i] if i < len(amounts) else 0)
-                
-                # Use actual balances instead of requested amounts
-                logger.info(f"Final amounts (after balance query): {actual_amounts}")
-                amounts = actual_amounts
+
+            # Resolve market tokens to determine outcome ordering.
+            market = self.clob_client.get_market(condition_id)
+            tokens_info: List[Any] = []
+            if isinstance(market, dict):
+                tokens_info = market.get("tokens") or []
             else:
+                tokens_info = getattr(market, "tokens", []) or []
+
+            token_entries: List[Dict[str, Any]] = []
+            for token in tokens_info:
+                if isinstance(token, dict):
+                    token_entries.append(
+                        {
+                            "id": token.get("token_id") or token.get("tokenId"),
+                            "outcome": token.get("outcome"),
+                        }
+                    )
+                else:
+                    token_entries.append(
+                        {
+                            "id": getattr(token, "token_id", None) or getattr(token, "tokenId", None),
+                            "outcome": getattr(token, "outcome", None),
+                        }
+                    )
+
+            if not token_entries:
                 logger.warning(
-                    f"No valid token_ids provided (got: {token_ids}), using requested amounts: {amounts}. "
-                    "This may fail if amounts exceed actual balance."
+                    "Market info missing token list; defaulting to fallback ordering for redemption"
+                )
+                token_entries = [{"id": token_id, "outcome": None}]
+
+            token_id_lower = token_id.lower()
+            target_index: Optional[int] = None
+            for idx, entry in enumerate(token_entries):
+                entry_id = entry.get("id")
+                if entry_id and entry_id.lower() == token_id_lower:
+                    target_index = idx
+                    break
+
+            if target_index is None:
+                raise ValueError(
+                    f"Token ID {token_id} does not belong to condition {condition_id}"
                 )
 
-            if token_ids:
-                filtered_amounts: List[float] = []
-                filtered_token_ids: List[Optional[str]] = []
-                for i, amount in enumerate(amounts):
-                    token_id = token_ids[i] if i < len(token_ids) else None
-                    if token_id or amount > 0:
-                        filtered_amounts.append(amount)
-                        filtered_token_ids.append(token_id)
-                    else:
-                        logger.debug(
-                            "Dropping placeholder amount at index %s (token_id=None, amount=%s)",
-                            i,
-                            amount,
-                        )
+            # Clamp requested amount to on-chain balance to avoid failures.
+            try:
+                onchain_balance = self.web3_client.get_token_balance(
+                    token_id=token_id,
+                    address=wallet_address,
+                )
+                logger.info(
+                    f"Token {token_id} on-chain balance: {onchain_balance} "
+                    f"(requested={amount})"
+                )
+            except Exception as exc:
+                logger.warning(
+                    f"Failed to query balance for token {token_id}: {exc}. "
+                    "Proceeding with requested amount."
+                )
+                onchain_balance = None
 
-                if len(filtered_amounts) != len(amounts):
-                    logger.info(
-                        "Trimmed %s placeholder amount entries with no token_id and zero balance",
-                        len(amounts) - len(filtered_amounts),
+            redeem_amount = min(onchain_balance, amount) if onchain_balance is not None else amount
+            if redeem_amount <= 0:
+                raise ValueError(f"No redeemable balance for token {token_id}")
+
+            slot_count = max(len(token_entries), 2)
+            amounts: List[float] = [0.0] * slot_count
+            amounts[target_index] = redeem_amount
+
+            # Include remaining outcome balances automatically when present.
+            for idx, entry in enumerate(token_entries):
+                if idx == target_index:
+                    continue
+
+                sibling_token_id = entry.get("id")
+                if not sibling_token_id:
+                    continue
+
+                try:
+                    sibling_balance = self.web3_client.get_token_balance(
+                        token_id=sibling_token_id,
+                        address=wallet_address,
                     )
-                    amounts = filtered_amounts
-                    token_ids = filtered_token_ids
+                    if sibling_balance and sibling_balance > 0:
+                        logger.info(
+                            f"Sibling token {sibling_token_id} balance detected: {sibling_balance}"
+                        )
+                        amounts[idx] = sibling_balance
+                except Exception as exc:
+                    logger.debug(
+                        f"Failed to query sibling token {sibling_token_id} balance: {exc}"
+                    )
 
             # Determine if it's a neg risk market
             # Try to get neg risk status from a token in this market

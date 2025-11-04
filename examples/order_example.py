@@ -111,13 +111,14 @@ def example_get_orders(service: OrderService, token_id: str = None):
         print(f"错误: {e}")
 
 
-def example_claim_rewards(service: OrderService, condition_id: str, amounts: list):
+def example_claim_rewards(service: OrderService, condition_id: str, token_id: str, amount: float):
     """示例: 收获奖励"""
     print("\n=== 收获奖励 ===")
     try:
         result = service.claim_rewards(
             condition_id=condition_id,
-            amounts=amounts
+            token_id=token_id,
+            amount=amount
         )
         print(f"成功: {result['status']}")
         print(f"消息: {result.get('message')}")
@@ -171,7 +172,7 @@ def main():
     # example_market_buy(service, token_id=TOKEN_ID, amount=10.0)
     
     # 5. 收获奖励
-    # example_claim_rewards(service, condition_id=CONDITION_ID, amounts=[10.0, 5.0])
+    # example_claim_rewards(service, condition_id=CONDITION_ID, token_id=TOKEN_ID, amount=10.0)
     
     print("\n" + "=" * 50)
     print("示例完成!")

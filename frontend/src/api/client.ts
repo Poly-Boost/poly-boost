@@ -148,11 +148,11 @@ class ApiClient {
     return response.data;
   }
 
-  async claimRewards(walletAddress: string, conditionId: string, amounts: number[], tokenIds?: (string | null)[]) {
+  async claimRewards(walletAddress: string, conditionId: string, tokenId: string, amount: number) {
     const response = await this.client.post(`/orders/${walletAddress}/rewards/claim`, {
       condition_id: conditionId,
-      amounts: amounts,
-      token_ids: tokenIds,
+      token_id: tokenId,
+      amount: amount,
     });
     return response.data;
   }

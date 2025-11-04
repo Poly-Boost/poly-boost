@@ -119,25 +119,20 @@ export const PositionList: React.FC<PositionListProps> = ({ positions, loading, 
     try {
       setActionLoading(position.asset);
       
-      // 传递 token_ids 让后端查询实际余额
-      // 根据 outcomeIndex 确定当前持仓和对面持仓的 token_id
-      const tokenIds = position.outcomeIndex === 0 
-        ? [position.asset, position.oppositeAsset || null]  // [YES, NO]
-        : [position.oppositeAsset || null, position.asset]; // [NO, YES]
-      
       console.log('Redeem request:', {
         conditionId: position.conditionId,
-        tokenIds,
-        outcomeIndex: position.outcomeIndex,
+        tokenId: position.asset,
         size: position.size,
         asset: position.asset,
         oppositeAsset: position.oppositeAsset
       });
       
-      // amounts 参数在后端会被实际余额替换
-      const amounts = [0, 0]; // 占位参数，后端会查询实际余额
-      
-      await apiClient.claimRewards(walletAddress, position.conditionId, amounts, tokenIds);
+      await apiClient.claimRewards(
+        walletAddress,
+        position.conditionId,
+        position.asset,
+        position.size
+      );
       message.success(`Successfully redeemed rewards for ${position.title}`);
     } catch (error: unknown) {
       const err = error as { response?: { data?: { detail?: string } }; message?: string };

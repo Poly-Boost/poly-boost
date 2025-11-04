@@ -32,8 +32,8 @@ class RedeemTask:
     """Lightweight container for a single redeem attempt."""
 
     condition_id: str
-    amounts: List[float]
-    token_ids: Optional[List[Optional[str]]]
+    token_id: str
+    amount: float
 
 
 class SelfRedeemMonitor:
@@ -205,7 +205,7 @@ class SelfRedeemMonitor:
 
     def _collect_tasks(self, wallet: Wallet) -> List[RedeemTask]:
         positions = self.position_svc.get_positions(wallet)
-        redeemables: Dict[str, Dict[str, object]] = {}
+        redeemables: Dict[str, RedeemTask] = {}
 
         for position in positions:
             if not getattr(position, "redeemable", False):
@@ -219,59 +219,36 @@ class SelfRedeemMonitor:
                 )
                 continue
 
-            bucket = redeemables.setdefault(
-                condition_id,
-                {
-                    "amounts": [0.0, 0.0],
-                    "token_ids": [None, None],
-                },
-            )
-
-            outcome_index = self._extract_attr(
-                position, "outcome_index", "outcomeIndex", default=0
-            )
-            if outcome_index not in (0, 1):
+            size = float(getattr(position, "size", 0.0) or 0.0)
+            if size <= 0:
                 logger.debug(
-                    "Wallet '%s': condition %s has unexpected outcome_index %s; defaulting to 0",
+                    "Wallet '%s': condition %s has non-positive size; skipping",
                     wallet.name,
                     condition_id,
-                    outcome_index,
                 )
-                outcome_index = 0
-
-            size = float(getattr(position, "size", 0.0) or 0.0)
-            bucket["amounts"][outcome_index] = size
+                continue
 
             token_id = self._extract_attr(position, "token_id", "tokenId")
-            if token_id:
-                bucket["token_ids"][outcome_index] = token_id
+            if not token_id:
+                token_id = self._extract_attr(position, "asset", "asset")
 
-            opposite_asset = self._extract_attr(
-                position, "opposite_asset", "oppositeAsset"
-            )
-            if opposite_asset:
-                other_idx = 1 - outcome_index
-                bucket["token_ids"][other_idx] = (
-                    bucket["token_ids"][other_idx] or opposite_asset
+            if not token_id:
+                logger.debug(
+                    "Wallet '%s': condition %s missing token_id; skipping position",
+                    wallet.name,
+                    condition_id,
                 )
+                continue
 
-        tasks: List[RedeemTask] = []
-        for condition_id, payload in redeemables.items():
-            token_ids: List[Optional[str]] = payload["token_ids"]  # type: ignore[assignment]
-            amounts: List[float] = payload["amounts"]  # type: ignore[assignment]
-
-            # Normalize tokens: if neither side resolved to a token ID, pass None.
-            normalized_tokens = token_ids if any(token_ids) else None
-
-            tasks.append(
-                RedeemTask(
+            existing = redeemables.get(condition_id)
+            if not existing or size > existing.amount:
+                redeemables[condition_id] = RedeemTask(
                     condition_id=condition_id,
-                    amounts=amounts,
-                    token_ids=normalized_tokens,
+                    token_id=token_id,
+                    amount=size,
                 )
-            )
 
-        return tasks
+        return list(redeemables.values())
 
     @staticmethod
     def _extract_attr(
@@ -300,18 +277,20 @@ class SelfRedeemMonitor:
             return
 
         logger.info(
-            "Wallet '%s': attempting auto redeem for condition %s (amounts=%s, token_ids=%s)",
+            "Wallet '%s': attempting auto redeem for condition %s (token_id=%s, amount=%s)",
             wallet.name,
             task.condition_id,
-            task.amounts,
-            task.token_ids,
+            task.token_id,
+            task.amount,
         )
 
         if self.dry_run:
             logger.info(
-                "Wallet '%s': [dry-run] would call claim_rewards(condition_id=%s)",
+                "Wallet '%s': [dry-run] would call claim_rewards(condition_id=%s, token_id=%s, amount=%s)",
                 wallet.name,
                 task.condition_id,
+                task.token_id,
+                task.amount,
             )
             self._mark_cooldown(cooldown_key)
             return
@@ -320,8 +299,8 @@ class SelfRedeemMonitor:
             order_service = self._get_order_service(wallet)
             order_service.claim_rewards(
                 condition_id=task.condition_id,
-                amounts=task.amounts,
-                token_ids=task.token_ids,
+                token_id=task.token_id,
+                amount=task.amount,
             )
             logger.info(
                 "Wallet '%s': auto redeem succeeded for condition %s",

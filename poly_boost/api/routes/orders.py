@@ -149,15 +149,15 @@ async def claim_rewards(
     
     - **wallet_address**: Wallet address to use for the operation
     - **condition_id**: Condition ID of the resolved market
-    - **amounts**: List of amounts to redeem [outcome1_amount, outcome2_amount]
-    - **token_ids**: (Optional) List of token IDs [token1_id, token2_id]. If provided, actual balances will be queried from chain.
+    - **token_id**: Token ID to redeem
+    - **amount**: Requested amount to redeem (will be clamped to on-chain balance)
     """
     order_service = get_order_service(wallet_address)
     try:
         result = order_service.claim_rewards(
             condition_id=request.condition_id,
-            amounts=request.amounts,
-            token_ids=request.token_ids
+            token_id=request.token_id,
+            amount=request.amount
         )
         return RewardsResponse(**result)
     except Exception as e:

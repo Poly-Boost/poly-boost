@@ -100,26 +100,14 @@ class ClaimRewardsRequest(BaseModel):
     """Request schema for claiming rewards."""
     
     condition_id: str = Field(..., description="Condition ID of the resolved market")
-    amounts: List[float] = Field(..., description="Amounts to redeem [outcome1, outcome2]")
-    token_ids: Optional[List[Optional[str]]] = Field(
-        None, 
-        description="Token IDs for balance query [token1_id, token2_id]. If provided, actual balances will be queried."
-    )
+    token_id: str = Field(..., description="Token ID to redeem")
+    amount: float = Field(..., description="Amount to redeem", gt=0)
     
-    @field_validator("amounts")
+    @field_validator("token_id")
     @classmethod
-    def validate_amounts(cls, v):
-        if len(v) != 2:
-            raise ValueError("Amounts must contain exactly 2 values")
-        if any(amount < 0 for amount in v):
-            raise ValueError("Amounts must be non-negative")
-        return v
-    
-    @field_validator("token_ids")
-    @classmethod
-    def validate_token_ids(cls, v):
-        if v is not None and len(v) != 2:
-            raise ValueError("Token IDs must contain exactly 2 values (can be null)")
+    def validate_token_id(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("Token ID must not be empty")
         return v
 
 
