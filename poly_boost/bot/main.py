@@ -1,7 +1,7 @@
 """
 Telegram Bot application entry point.
 
-Run with: python -m bot.main
+Run with: python -m poly_boost.bot.main
 """
 
 import logging
@@ -16,24 +16,40 @@ from telegram.ext import (
     ContextTypes
 )
 
-from py_clob_client.client import ClobClient
+from polymarket_apis.clients.data_client import PolymarketDataClient
+from playhouse.postgres_ext import PostgresqlExtDatabase
 
 from poly_boost.core.config_loader import load_config
-from poly_boost.core.in_memory_activity_queue import InMemoryActivityQueue
+from poly_boost.core.client_factory import ClientFactory
+from poly_boost.core.models import db
+from poly_boost.models.user_wallet import UserWallet
+from poly_boost.services.user_wallet_service import UserWalletService
 from poly_boost.services.position_service import PositionService
-from poly_boost.services.trading_service import TradingService
+from poly_boost.services.activity_service import ActivityService
 from poly_boost.services.wallet_service import WalletService
-from poly_boost.bot.keyboards import get_main_menu_keyboard
-from poly_boost.bot.handlers.position_handler import (
-    show_positions_menu,
-    view_all_positions,
-    view_position_value
+from poly_boost.bot.conversations.wallet_init import create_wallet_init_conversation
+from poly_boost.bot.handlers.wallet_handler import (
+    wallet_command,
+    fund_command,
+    profile_command
 )
-from poly_boost.bot.handlers.trading_handler import (
-    show_trading_menu,
-    view_trading_status,
-    start_copy_trading_prompt,
-    stop_copy_trading_prompt
+from poly_boost.bot.handlers.position_handler import (
+    positions_command,
+    position_page_callback,
+    position_select_callback,
+    position_redeem_callback,
+    position_list_callback
+)
+from poly_boost.bot.handlers.order_handler import (
+    orders_command,
+    order_page_callback,
+    order_select_callback,
+    order_cancel_callback,
+    order_list_callback
+)
+from poly_boost.bot.handlers.activity_handler import (
+    activities_command,
+    activity_page_callback
 )
 
 
@@ -45,25 +61,36 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def initialize_database():
     """
-    Handle /start command.
+    Initialize database connection and create tables.
 
-    Args:
-        update: Telegram update
-        context: Bot context
+    Returns:
+        Database instance
     """
-    await update.message.reply_text(
-        "👋 *Welcome to Polymarket Copy Trading Bot!*\n\n"
-        "I can help you:\n"
-        "• View your positions\n"
-        "• Check your balance\n"
-        "• Manage copy trading\n"
-        "• View trading statistics\n\n"
-        "Use the menu below to get started.",
-        parse_mode="Markdown",
-        reply_markup=get_main_menu_keyboard()
-    )
+    # Get database configuration from environment
+    db_url = os.environ.get("DATABASE_URL")
+
+    if db_url:
+        # Parse PostgreSQL URL
+        logger.info("Using PostgreSQL database")
+        # Format: postgresql://user:password@host:port/database
+        database = PostgresqlExtDatabase(db_url)
+    else:
+        # Fallback to SQLite for local development
+        logger.info("Using SQLite database for development")
+        from peewee import SqliteDatabase
+        database = SqliteDatabase('poly_boost.db')
+
+    # Initialize database connection
+    db.initialize(database)
+
+    # Create tables
+    with db:
+        db.create_tables([UserWallet], safe=True)
+        logger.info("Database tables created/verified")
+
+    return db
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -76,86 +103,27 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     help_text = (
         "ℹ️ *Help*\n\n"
-        "*Commands:*\n"
-        "/start - Start the bot\n"
+        "*Wallet Commands:*\n"
+        "/start - Initialize your wallet\n"
+        "/wallet - View wallet details\n"
+        "/fund - Get funding instructions\n"
+        "/profile - View Polymarket profile\n\n"
+        "*Position Commands:*\n"
+        "/positions - View your positions\n\n"
+        "*Trading Commands:*\n"
+        "/orders - View active orders\n"
+        "/activities - View activity history\n\n"
+        "*Other Commands:*\n"
         "/help - Show this help message\n"
-        "/setwallet <address> - Set your wallet address\n"
-        "/status - Show bot status\n\n"
-        "*Menu Options:*\n"
-        "📊 Positions - View and manage your positions\n"
-        "💰 Balance - Check your USDC balance\n"
-        "🔄 Copy Trading - Control copy trading operations\n"
-        "📈 Stats - View trading statistics\n"
-        "⚙️ Settings - Configure bot settings\n"
     )
     await update.message.reply_text(help_text, parse_mode="Markdown")
-
-
-async def setwallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Handle /setwallet command.
-
-    Args:
-        update: Telegram update
-        context: Bot context
-    """
-    if not context.args:
-        await update.message.reply_text(
-            "❌ Please provide a wallet address.\n"
-            "Usage: `/setwallet <address>`",
-            parse_mode="Markdown"
-        )
-        return
-
-    wallet_address = context.args[0]
-
-    # Basic validation
-    if not wallet_address.startswith("0x") or len(wallet_address) != 42:
-        await update.message.reply_text(
-            "❌ Invalid wallet address format. "
-            "Address should start with '0x' and be 42 characters long."
-        )
-        return
-
-    # Store wallet address in user data
-    context.user_data['wallet_address'] = wallet_address
-
-    await update.message.reply_text(
-        f"✅ Wallet address set to:\n`{wallet_address}`",
-        parse_mode="Markdown"
-    )
-
-
-async def handle_menu_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Handle menu button presses.
-
-    Args:
-        update: Telegram update
-        context: Bot context
-    """
-    text = update.message.text
-
-    if text == "📊 Positions":
-        await show_positions_menu(update, context)
-    elif text == "💰 Balance":
-        # TODO: Implement balance handler
-        await update.message.reply_text("Balance feature coming soon!")
-    elif text == "🔄 Copy Trading":
-        await show_trading_menu(update, context)
-    elif text == "📈 Stats":
-        # TODO: Implement stats handler
-        await update.message.reply_text("Stats feature coming soon!")
-    elif text == "⚙️ Settings":
-        # TODO: Implement settings handler
-        await update.message.reply_text("Settings feature coming soon!")
-    elif text == "ℹ️ Help":
-        await help_command(update, context)
 
 
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Handle callback queries from inline keyboards.
+
+    Routes callbacks to appropriate handlers based on callback_data prefix.
 
     Args:
         update: Telegram update
@@ -164,27 +132,46 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     data = query.data
 
-    # Position handlers
-    if data == "pos_view_all":
-        await view_all_positions(update, context)
-    elif data == "pos_value":
-        await view_position_value(update, context)
+    try:
+        # Position handlers
+        if data.startswith("pos_page_"):
+            await position_page_callback(update, context)
+        elif data.startswith("pos_select_"):
+            await position_select_callback(update, context)
+        elif data.startswith("pos_redeem_"):
+            await position_redeem_callback(update, context)
+        elif data == "pos_list":
+            await position_list_callback(update, context)
 
-    # Trading handlers
-    elif data == "trade_status":
-        await view_trading_status(update, context)
-    elif data == "trade_start":
-        await start_copy_trading_prompt(update, context)
-    elif data == "trade_stop":
-        await stop_copy_trading_prompt(update, context)
+        # Order handlers
+        elif data.startswith("order_page_"):
+            await order_page_callback(update, context)
+        elif data.startswith("order_select_"):
+            await order_select_callback(update, context)
+        elif data.startswith("order_cancel_"):
+            await order_cancel_callback(update, context)
+        elif data == "order_list":
+            await order_list_callback(update, context)
 
-    # Navigation
-    elif data == "back_main":
-        await query.answer()
-        await query.edit_message_text(
-            "Main menu:",
-            reply_markup=get_main_menu_keyboard()
-        )
+        # Activity handlers
+        elif data.startswith("activity_page_"):
+            await activity_page_callback(update, context)
+
+        # Ignore noop callbacks (pagination page indicator)
+        elif data == "noop":
+            await query.answer()
+
+        else:
+            # Unknown callback
+            await query.answer("Unknown action")
+            logger.warning(f"Unknown callback data: {data}")
+
+    except Exception as e:
+        logger.error(f"Error handling callback query: {e}", exc_info=True)
+        try:
+            await query.answer("An error occurred. Please try again.")
+        except Exception:
+            pass
 
 
 def main():
@@ -198,43 +185,52 @@ def main():
         if not bot_token:
             raise ValueError("TELEGRAM_BOT_TOKEN environment variable not set")
 
-        # Initialize services
-        queue_config = config.get('queue', {})
-        memory_config = queue_config.get('memory', {})
-        max_workers = memory_config.get('max_workers', 10)
-        activity_queue = InMemoryActivityQueue(max_workers=max_workers)
+        # Initialize database
+        database = initialize_database()
 
-        # Create CLOB client
-        clob_client = ClobClient(
-            host="https://clob.polymarket.com",
-            key="",
-            chain_id=137
+        # Initialize Polymarket clients
+        data_client = PolymarketDataClient()
+        client_factory = ClientFactory()
+
+        # Initialize services
+        user_wallet_service = UserWalletService(database=database)
+        position_service = PositionService(
+            clob_client=None,  # Legacy client not needed
+            data_client=data_client
         )
-
-        # Initialize services
-        position_service = PositionService(clob_client)
-        trading_service = TradingService(activity_queue)
-        wallet_service = WalletService(clob_client)
+        activity_service = ActivityService(
+            data_client=data_client
+        )
+        wallet_service = WalletService(
+            clob_client=None,  # Legacy client not needed
+            client_factory=client_factory
+        )
 
         # Create application
         application = Application.builder().token(bot_token).build()
 
         # Store services in bot_data
+        application.bot_data['user_wallet_service'] = user_wallet_service
         application.bot_data['position_service'] = position_service
-        application.bot_data['trading_service'] = trading_service
+        application.bot_data['activity_service'] = activity_service
         application.bot_data['wallet_service'] = wallet_service
+        application.bot_data['client_factory'] = client_factory
         application.bot_data['config'] = config
 
-        # Add handlers
-        application.add_handler(CommandHandler("start", start_command))
+        # Add conversation handlers (must be added first for priority)
+        wallet_init_conversation = create_wallet_init_conversation()
+        application.add_handler(wallet_init_conversation)
+
+        # Add command handlers
         application.add_handler(CommandHandler("help", help_command))
-        application.add_handler(CommandHandler("setwallet", setwallet_command))
-        application.add_handler(
-            MessageHandler(
-                filters.TEXT & ~filters.COMMAND,
-                handle_menu_message
-            )
-        )
+        application.add_handler(CommandHandler("wallet", wallet_command))
+        application.add_handler(CommandHandler("fund", fund_command))
+        application.add_handler(CommandHandler("profile", profile_command))
+        application.add_handler(CommandHandler("positions", positions_command))
+        application.add_handler(CommandHandler("orders", orders_command))
+        application.add_handler(CommandHandler("activities", activities_command))
+
+        # Add callback query handler (for all inline keyboard buttons)
         application.add_handler(CallbackQueryHandler(handle_callback_query))
 
         # Start bot

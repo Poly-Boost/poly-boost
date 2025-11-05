@@ -6,7 +6,7 @@ target wallet activities and executes trades based on configured strategies.
 """
 
 import time
-from decimal import Decimal, ROUND_FLOOR, getcontext
+from decimal import Decimal, ROUND_FLOOR, getcontext, ROUND_CEILING
 from functools import partial
 from typing import List, Optional, Dict, Any
 

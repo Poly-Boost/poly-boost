@@ -15,4 +15,5 @@ dependencies = [
     "uvicorn[standard]>=0.37.0",
     "python-telegram-bot>=22.5",
     "pydantic>=2.12.3",
+    "qrcode>=8.2",
 ]
