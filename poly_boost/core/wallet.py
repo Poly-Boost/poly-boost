@@ -6,7 +6,7 @@ All services use wallet.api_address to call APIs, abstracting away wallet type d
 """
 
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Literal, Optional
 from web3 import Web3
 import os
 import logging
@@ -51,7 +51,7 @@ class Wallet(ABC):
 
     @property
     @abstractmethod
-    def signature_type(self) -> int:
+    def signature_type(self) -> Literal[0, 1, 2, -1]:
         """
         Get the signature type for this wallet.
 
@@ -141,7 +141,7 @@ class EOAWallet(Wallet):
         return self.eoa_address
 
     @property
-    def signature_type(self) -> int:
+    def signature_type(self) -> Literal[0]:
         return 0
 
     @property
@@ -177,7 +177,7 @@ class ProxyWallet(Wallet):
         eoa_address: str,
         proxy_address: str,
         private_key_env: str,
-        signature_type: int = 2  # Default to Gnosis Safe
+        signature_type: Literal[1, 2] = 2  # Default to Gnosis Safe
     ):
         """
         Initialize proxy wallet.
@@ -194,7 +194,7 @@ class ProxyWallet(Wallet):
         """
         super().__init__(name, eoa_address)
         self.proxy_address = Web3.to_checksum_address(proxy_address)
-        self._signature_type = signature_type
+        self._signature_type: Literal[1, 2] = signature_type
         self._private_key_env = private_key_env
         self._private_key: Optional[str] = None
 
@@ -218,7 +218,7 @@ class ProxyWallet(Wallet):
         return self.proxy_address
 
     @property
-    def signature_type(self) -> int:
+    def signature_type(self) -> Literal[1, 2]:
         return self._signature_type
 
     @property
@@ -266,7 +266,7 @@ class ReadOnlyWallet(Wallet):
         return self.eoa_address
 
     @property
-    def signature_type(self) -> int:
+    def signature_type(self) -> Literal[-1]:
         return -1  # Special marker for read-only
 
     @property

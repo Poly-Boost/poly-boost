@@ -4,7 +4,7 @@ ClientFactory - Creates and caches API clients for wallets.
 Handles client creation, credential management, and connection pooling.
 """
 
-from typing import Dict, Optional
+from typing import Dict, Literal, Optional, cast
 import httpx
 import logging
 import requests
@@ -160,11 +160,47 @@ class ClientFactory:
         creds = self._get_api_credentials(wallet, private_key)
 
         # Resolve the on-chain address to use for signing/funding
-        if isinstance(wallet, ProxyWallet):
-            address = wallet.proxy_address
-        else:
-            # For EOA wallets, use the EOA address
-            address = wallet.eoa_address
+        # Use the same address derivation logic as PolymarketWeb3Client
+        sig_type = wallet.signature_type
+
+        # Type guard to ensure sig_type is valid for SDK
+        if sig_type not in (0, 1, 2):
+            raise ValueError(
+                f"Invalid signature_type {sig_type} for wallet '{wallet.name}'. "
+                f"Expected 0 (EOA), 1 (Proxy), or 2 (Safe)."
+            )
+
+        # Cast to Literal type for SDK compatibility
+        sdk_sig_type = cast(Literal[0, 1, 2], sig_type)
+
+        match sig_type:
+            case 0:
+                # EOA wallet - use the EOA address directly
+                address = wallet.eoa_address
+            case 1:
+                # Proxy wallet - use the proxy address
+                if isinstance(wallet, ProxyWallet):
+                    address = wallet.proxy_address
+                else:
+                    # Fallback: derive proxy address using Web3Client
+                    temp_web3 = PolymarketWeb3Client(
+                        private_key=private_key,
+                        signature_type=1,
+                        chain_id=137,
+                    )
+                    address = temp_web3.address
+            case 2:
+                # Safe wallet - derive address using Web3Client
+                temp_web3 = PolymarketWeb3Client(
+                    private_key=private_key,
+                    signature_type=2,
+                    chain_id=137,
+                )
+                address = temp_web3.address
+            case _:
+                raise ValueError(
+                    f"Unknown signature_type {sig_type} for wallet '{wallet.name}'"
+                )
 
         # Create CLOB client
         clob_client = PolymarketClobClient(
@@ -172,7 +208,7 @@ class ClientFactory:
             address=address,
             creds=creds,
             chain_id=137,  # Polygon mainnet
-            signature_type=wallet.signature_type,
+            signature_type=sdk_sig_type,
         )
 
         # Replace default HTTP clients with shared instances
@@ -220,10 +256,21 @@ class ClientFactory:
 
         logger.info(f"Creating Web3 client for wallet '{wallet.name}'...")
 
+        # Type guard to ensure signature_type is valid for SDK
+        sig_type = wallet.signature_type
+        if sig_type not in (0, 1, 2):
+            raise ValueError(
+                f"Invalid signature_type {sig_type} for wallet '{wallet.name}'. "
+                f"Expected 0 (EOA), 1 (Proxy), or 2 (Safe)."
+            )
+
+        # Cast to Literal type for SDK compatibility
+        sdk_sig_type = cast(Literal[0, 1, 2], sig_type)
+
         # Create Web3 client
         web3_client = PolymarketWeb3Client(
             private_key=private_key,
-            signature_type=wallet.signature_type,
+            signature_type=sdk_sig_type,
             chain_id=137,  # Polygon mainnet
         )
 
