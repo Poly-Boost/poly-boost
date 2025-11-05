@@ -6,7 +6,7 @@ including market orders, limit orders, and reward claiming.
 """
 
 from typing import Optional, Dict, Any, List
-from decimal import Decimal
+from decimal import Decimal, ROUND_DOWN
 import logging
 
 from polymarket_apis.clients.clob_client import PolymarketClobClient
@@ -308,6 +308,82 @@ class OrderService:
             logger.error(f"Failed to create limit buy order: {e}")
             raise
 
+    def _get_token_balance_wei(self, token_id: str, address: str) -> int:
+        """Return raw ERC1155 balance for ``token_id`` owned by ``address``."""
+
+        balance_wei = self.web3_client.conditional_tokens.functions.balanceOf(
+            self.web3_client.w3.to_checksum_address(address),
+            int(token_id)
+        ).call()
+        return int(balance_wei)
+
+    @staticmethod
+    def _apply_safety_margin(balance_wei: int) -> int:
+        """Shrink ``balance_wei`` slightly to avoid edge-case underflows."""
+
+        if balance_wei <= 0:
+            return 0
+
+        margin = max(1, int(balance_wei * 0.00001))  # 0.001% or 1 wei
+        safe_value = balance_wei - margin
+        return safe_value if safe_value > 0 else 0
+
+    @staticmethod
+    def _to_wei(amount: float) -> int:
+        """Convert a decimal USDC amount to on-chain integer units (6dp)."""
+
+        if amount <= 0:
+            return 0
+
+        quantized = (Decimal(str(amount)) * Decimal("1000000")).quantize(
+            Decimal("1"), rounding=ROUND_DOWN
+        )
+        return int(quantized)
+
+    @staticmethod
+    def _normalize_market_tokens(market: Any) -> List[Dict[str, Any]]:
+        """Extract token metadata while preserving on-chain ordering."""
+
+        raw_tokens: List[Any] = []
+        if isinstance(market, dict):
+            raw_tokens = market.get("tokens") or market.get("token_ids") or []
+        else:
+            raw_tokens = (
+                getattr(market, "token_ids", None)
+                or getattr(market, "tokens", None)
+                or []
+            )
+
+        normalized: List[Dict[str, Any]] = []
+        for token in raw_tokens:
+            if isinstance(token, dict):
+                token_id = token.get("token_id") or token.get("tokenId")
+                outcome = token.get("outcome")
+            else:
+                token_id = getattr(token, "token_id", None) or getattr(token, "tokenId", None)
+                outcome = getattr(token, "outcome", None)
+
+            normalized.append({"id": token_id, "outcome": outcome})
+
+        return normalized
+
+    @staticmethod
+    def _infer_neg_risk(market: Any) -> bool:
+        """Infer whether the market is negative-risk. Defaults to True."""
+
+        candidates = ("neg_risk", "negRisk", "negative_risk", "negativeRisk")
+
+        for key in candidates:
+            if isinstance(market, dict):
+                value = market.get(key)
+            else:
+                value = getattr(market, key, None)
+
+            if value is not None:
+                return bool(value)
+
+        return True
+
     def claim_rewards(
         self,
         condition_id: str,
@@ -332,143 +408,113 @@ class OrderService:
             if amount <= 0:
                 raise ValueError("Amount must be greater than 0")
 
+            # High-level flow:
+            # 1. Resolve market metadata to understand outcome ordering.
+            # 2. Read on-chain balances for each outcome owned by this wallet.
+            # 3. Clamp requested amount to the available balance (with a safety margin).
+            # 4. Redeem with the final amounts so the adapter never sees an over-withdrawal.
+
             logger.info(
                 f"Claiming rewards for condition_id={condition_id}, "
                 f"token_id={token_id}, requested amount={amount}"
             )
 
-            # Get the correct wallet address (automatically correct for EOA/Proxy)
+            # EOA wallet -> api_address already equals the EOA address
             wallet_address = self.wallet.api_address
             logger.info(
                 f"Wallet: {self.wallet.name}, signature type: {self.wallet.signature_type}, "
                 f"address: {wallet_address}"
             )
 
-            # Resolve market tokens to determine outcome ordering.
             market = self.clob_client.get_market(condition_id)
-            tokens_info: List[Any] = []
-            if isinstance(market, dict):
-                tokens_info = market.get("tokens") or []
-            else:
-                tokens_info = getattr(market, "tokens", []) or []
-
-            token_entries: List[Dict[str, Any]] = []
-            for token in tokens_info:
-                if isinstance(token, dict):
-                    token_entries.append(
-                        {
-                            "id": token.get("token_id") or token.get("tokenId"),
-                            "outcome": token.get("outcome"),
-                        }
-                    )
-                else:
-                    token_entries.append(
-                        {
-                            "id": getattr(token, "token_id", None) or getattr(token, "tokenId", None),
-                            "outcome": getattr(token, "outcome", None),
-                        }
-                    )
+            # Polymarket SDK exposes tokens as token_ids on ClobMarket; fall back to dict shape.
+            token_entries = self._normalize_market_tokens(market)
 
             if not token_entries:
                 logger.warning(
-                    "Market info missing token list; defaulting to fallback ordering for redemption"
+                    "Market payload missing token metadata; using requested token only"
                 )
                 token_entries = [{"id": token_id, "outcome": None}]
 
             token_id_lower = token_id.lower()
-            target_index: Optional[int] = None
-            for idx, entry in enumerate(token_entries):
-                entry_id = entry.get("id")
-                if entry_id and entry_id.lower() == token_id_lower:
-                    target_index = idx
-                    break
+            target_index = next(
+                (idx for idx, entry in enumerate(token_entries)
+                 if entry.get("id") and entry["id"].lower() == token_id_lower),
+                None,
+            )
 
             if target_index is None:
-                raise ValueError(
-                    f"Token ID {token_id} does not belong to condition {condition_id}"
-                )
-
-            # Clamp requested amount to on-chain balance to avoid failures.
-            try:
-                onchain_balance = self.web3_client.get_token_balance(
-                    token_id=token_id,
-                    address=wallet_address,
-                )
-                logger.info(
-                    f"Token {token_id} on-chain balance: {onchain_balance} "
-                    f"(requested={amount})"
-                )
-            except Exception as exc:
+                # When the requested token isn't in metadata, treat it as slot 0 and continue.
                 logger.warning(
-                    f"Failed to query balance for token {token_id}: {exc}. "
-                    "Proceeding with requested amount."
+                    "Token %s not found in market metadata; prepending fallback entry",
+                    token_id,
                 )
-                onchain_balance = None
-
-            redeem_amount = min(onchain_balance, amount) if onchain_balance is not None else amount
-            if redeem_amount <= 0:
-                raise ValueError(f"No redeemable balance for token {token_id}")
+                token_entries.insert(0, {"id": token_id, "outcome": None})
+                target_index = 0
 
             slot_count = max(len(token_entries), 2)
-            amounts: List[float] = [0.0] * slot_count
-            amounts[target_index] = redeem_amount
+            resolved_token_ids: List[Optional[str]] = [
+                token_entries[idx]["id"] if idx < len(token_entries) else None
+                for idx in range(slot_count)
+            ]
 
-            # Include remaining outcome balances automatically when present.
-            for idx, entry in enumerate(token_entries):
-                if idx == target_index:
+            requested_wei = self._to_wei(amount)
+            if requested_wei <= 0:
+                raise ValueError(f"No redeemable balance for token {token_id}")
+
+            amounts_wei: List[int] = [0] * slot_count
+            for idx, resolved_id in enumerate(resolved_token_ids):
+                if not resolved_id:
                     continue
 
-                sibling_token_id = entry.get("id")
-                if not sibling_token_id:
-                    continue
+                # Pull raw ERC1155 balance for each outcome and shave a tiny margin to
+                # avoid underflow if someone else redeems a few wei between read and tx.
+                balance_wei = self._get_token_balance_wei(resolved_id, wallet_address)
+                safe_balance_wei = self._apply_safety_margin(balance_wei)
 
-                try:
-                    sibling_balance = self.web3_client.get_token_balance(
-                        token_id=sibling_token_id,
-                        address=wallet_address,
-                    )
-                    if sibling_balance and sibling_balance > 0:
-                        logger.info(
-                            f"Sibling token {sibling_token_id} balance detected: {sibling_balance}"
-                        )
-                        amounts[idx] = sibling_balance
-                except Exception as exc:
-                    logger.debug(
-                        f"Failed to query sibling token {sibling_token_id} balance: {exc}"
-                    )
-
-            # Determine if it's a neg risk market
-            # Try to get neg risk status from a token in this market
-            # For simplicity, we'll default to True (most markets are neg risk)
-            neg_risk = True
-
-            # Check and set approval if needed
-            logger.info("Checking ERC1155 approval status...")
-            self._ensure_conditional_tokens_approval(neg_risk=neg_risk)
-
-            # Redeem positions with actual amounts
-            logger.info(f"Redeeming with amounts: {amounts}")
-            
-            # Use different redeem method based on wallet signature_type
-            if self.wallet.signature_type == 0:
-                # EOA mode - redeem directly without proxy
-                logger.info("EOA mode: redeeming directly from EOA address")
-                self._redeem_position_eoa(condition_id, amounts, neg_risk)
-            else:
-                # Proxy mode - use ProxyFactory
-                logger.info("Proxy mode: redeeming through ProxyFactory")
-                self.web3_client.redeem_position(
-                    condition_id=condition_id,
-                    amounts=amounts,
-                    neg_risk=neg_risk
+                logger.info(
+                    "Token slot %s (id=%s) balance=%s wei (safe=%s wei)",
+                    idx,
+                    resolved_id,
+                    balance_wei,
+                    safe_balance_wei,
                 )
 
-            logger.info("Rewards claimed successfully")
+                if idx == target_index:
+                    # Only redeem at most what we hold (after safety margin).
+                    chosen_wei = min(requested_wei, safe_balance_wei)
+                    if chosen_wei <= 0:
+                        raise ValueError(
+                            f"Requested redeem amount exceeds available balance for token {token_id}"
+                        )
+                    amounts_wei[idx] = chosen_wei
+                elif safe_balance_wei > 0:
+                    # Include the sibling outcome so NegRiskAdapter can burn pairs if needed.
+                    amounts_wei[idx] = safe_balance_wei
+
+            if not any(amounts_wei):
+                raise ValueError(f"No redeemable balance detected for condition {condition_id}")
+
+            # Neg-risk flag decides between adapter.redeemPositions and conditionalTokens.redeemPositions.
+            neg_risk = self._infer_neg_risk(market)
+
+            amounts = [wei / 1_000_000 for wei in amounts_wei]
+            logger.info("Final redeem amounts (wei): %s", amounts_wei)
+            logger.info("Final redeem amounts (USDC): %s", amounts)
+
+            tx_hash = self.web3_client.redeem_position(
+                condition_id=condition_id,
+                amounts=amounts,
+                neg_risk=neg_risk,
+            )
+
+            logger.info(f"Rewards claimed successfully. Transaction: {tx_hash}")
 
             return {
                 "status": "success",
                 "condition_id": condition_id,
                 "amounts": amounts,
+                "tx_hash": tx_hash,
                 "message": "Rewards claimed successfully"
             }
 
@@ -476,176 +522,6 @@ class OrderService:
             logger.error(f"Failed to claim rewards: {e}")
             raise
 
-    def _redeem_position_eoa(
-        self,
-        condition_id: str,
-        amounts: List[float],
-        neg_risk: bool = True
-    ):
-        """
-        Redeem position directly from EOA (without ProxyFactory).
-        
-        Args:
-            condition_id: Condition ID of the market
-            amounts: Amounts to redeem [outcome1, outcome2]
-            neg_risk: Whether it's a neg risk market
-        """
-        from web3 import Web3
-        
-        logger.info("Starting EOA direct redeem...")
-        
-        # Convert amounts to wei (6 decimals for USDC)
-        amounts_wei = [int(amount * 1e6) for amount in amounts]
-        logger.info(f"Amounts in wei: {amounts_wei}")
-        
-        # Get nonce
-        nonce = self.web3_client.w3.eth.get_transaction_count(
-            self.web3_client.account.address
-        )
-        
-        # Choose the right contract and method
-        if neg_risk:
-            # NegRiskAdapter.redeemPositions
-            contract = self.web3_client.neg_risk_adapter
-            contract_address = self.web3_client.neg_risk_adapter_address
-            logger.info(f"Using NegRiskAdapter at {contract_address}")
-            
-            # Build transaction
-            txn = contract.functions.redeemPositions(
-                condition_id,
-                amounts_wei
-            ).build_transaction({
-                "from": self.web3_client.account.address,
-                "nonce": nonce,
-                "gasPrice": int(1.05 * self.web3_client.w3.eth.gas_price),
-                "gas": 500000,
-            })
-        else:
-            # ConditionalTokens.redeemPositions
-            contract = self.web3_client.conditional_tokens
-            contract_address = self.web3_client.conditional_tokens_address
-            logger.info(f"Using ConditionalTokens at {contract_address}")
-            
-            # Build transaction
-            txn = contract.functions.redeemPositions(
-                Web3.to_checksum_address(self.web3_client.usdc_address),
-                bytes(32),  # parentCollectionId = 0x00...00
-                condition_id,
-                [1, 2]  # indexSets for binary market
-            ).build_transaction({
-                "from": self.web3_client.account.address,
-                "nonce": nonce,
-                "gasPrice": int(1.05 * self.web3_client.w3.eth.gas_price),
-                "gas": 500000,
-            })
-        
-        # Sign and send transaction
-        signed_txn = self.web3_client.account.sign_transaction(txn)
-        tx_hash = self.web3_client.w3.eth.send_raw_transaction(
-            signed_txn.raw_transaction
-        ).hex()
-        
-        logger.info(f"EOA redeem transaction sent: {tx_hash}")
-        
-        # Wait for confirmation
-        receipt = self.web3_client.w3.eth.wait_for_transaction_receipt(tx_hash)
-        
-        if receipt['status'] == 1:
-            logger.info(f"EOA redeem transaction confirmed: {tx_hash}")
-        else:
-            raise Exception(f"EOA redeem transaction failed: {tx_hash}")
-    
-    def _ensure_conditional_tokens_approval(self, neg_risk: bool = True):
-        """
-        Ensure ConditionalTokens contract is approved for the adapter.
-
-        Args:
-            neg_risk: Whether to approve for neg risk adapter or standard exchange
-        """
-        from web3 import Web3
-        
-        # Get the operator address based on neg_risk
-        operator = (
-            self.web3_client.neg_risk_adapter_address if neg_risk
-            else self.web3_client.exchange_address
-        )
-
-        # Get the correct wallet address (automatically correct for EOA/Proxy)
-        wallet_address = self.wallet.api_address
-        wallet_type = "EOA" if self.wallet.signature_type == 0 else "Proxy"
-        logger.info(f"Checking approval for {wallet_type} wallet: {wallet_address}")
-        logger.info(f"Operator: {operator}")
-        
-        # Check if already approved
-        is_approved = self.web3_client.conditional_tokens.functions.isApprovedForAll(
-            Web3.to_checksum_address(wallet_address),
-            Web3.to_checksum_address(operator)
-        ).call()
-        
-        if is_approved:
-            logger.info("Already approved, skipping approval transaction")
-            return
-        
-        logger.info("Not approved yet, sending approval transaction...")
-        
-        # Get nonce
-        nonce = self.web3_client.w3.eth.get_transaction_count(
-            self.web3_client.account.address
-        )
-        
-        if self.wallet.signature_type == 0:
-            # EOA mode - call setApprovalForAll directly
-            logger.info("EOA mode: sending approval directly")
-            txn = self.web3_client.conditional_tokens.functions.setApprovalForAll(
-                Web3.to_checksum_address(operator),
-                True
-            ).build_transaction({
-                "from": self.web3_client.account.address,
-                "nonce": nonce,
-                "gasPrice": int(1.05 * self.web3_client.w3.eth.gas_price),
-                "gas": 100000,
-            })
-        else:
-            # Proxy mode - use ProxyFactory
-            logger.info("Proxy mode: sending approval through ProxyFactory")
-            
-            # Encode the setApprovalForAll call
-            approval_data = self.web3_client.conditional_tokens.encode_abi(
-                abi_element_identifier="setApprovalForAll",
-                args=[Web3.to_checksum_address(operator), True]
-            )
-            
-            # Create proxy transaction
-            proxy_txn = {
-                "typeCode": 1,
-                "to": self.web3_client.conditional_tokens_address,
-                "value": 0,
-                "data": approval_data,
-            }
-            
-            # Build transaction through proxy factory
-            txn = self.web3_client.proxy_factory.functions.proxy([proxy_txn]).build_transaction({
-                "nonce": nonce,
-                "gasPrice": int(1.05 * self.web3_client.w3.eth.gas_price),
-                "gas": 500000,
-                "from": self.web3_client.account.address,
-            })
-        
-        # Sign and send
-        signed_txn = self.web3_client.account.sign_transaction(txn)
-        tx_hash = self.web3_client.w3.eth.send_raw_transaction(
-            signed_txn.raw_transaction
-        ).hex()
-        
-        logger.info(f"Approval transaction sent: {tx_hash}")
-        
-        # Wait for confirmation
-        receipt = self.web3_client.w3.eth.wait_for_transaction_receipt(tx_hash)
-        
-        if receipt['status'] == 1:
-            logger.info("Approval transaction confirmed successfully")
-        else:
-            raise Exception(f"Approval transaction failed: {tx_hash}")
 
     def get_orders(
         self,
