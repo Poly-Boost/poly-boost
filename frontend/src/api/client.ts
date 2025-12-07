@@ -157,6 +157,11 @@ class ApiClient {
     return response.data;
   }
 
+  async redeemAllPositions(walletAddress: string) {
+    const response = await this.client.post(`/orders/${walletAddress}/rewards/claim-all`);
+    return response.data;
+  }
+
   // Activity API
   async getActivitySummary(walletAddress: string, params?: { limit?: number }) {
     const response = await this.client.get(`/activity/${walletAddress}`, { params });

@@ -18,6 +18,7 @@ from poly_boost.api.schemas.order_schemas import (
     RewardsResponse,
     CancelOrderRequest,
     CancelOrderResponse,
+    RedeemAllResponse,
 )
 
 router = APIRouter(prefix="/orders", tags=["orders"])
@@ -255,4 +256,36 @@ async def get_trade_history(
         )
         return trades
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{wallet_address}/rewards/claim-all", response_model=RedeemAllResponse)
+async def claim_all_rewards(
+    wallet_address: str
+) -> RedeemAllResponse:
+    """
+    Claim rewards for all redeemable positions.
+
+    This endpoint will automatically redeem all positions that are marked as redeemable
+    for the specified wallet. Individual redemption failures will not stop the process.
+
+    - **wallet_address**: Wallet address to use for the operation
+
+    Returns:
+    - **status**: Overall operation status (success/partial/failed)
+    - **total_positions**: Total number of redeemable positions found
+    - **successful**: Number of successful redemptions
+    - **failed**: Number of failed redemptions
+    - **results**: List of successful redemption details
+    - **errors**: List of error details for failed redemptions
+    """
+    order_service = get_order_service(wallet_address)
+    try:
+        result = order_service.redeem_all_positions()
+        return RedeemAllResponse(**result)
+    except ValueError as e:
+        # Configuration error (e.g., PositionService not configured)
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        # Unexpected errors
         raise HTTPException(status_code=500, detail=str(e))

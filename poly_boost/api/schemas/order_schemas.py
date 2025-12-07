@@ -2,7 +2,7 @@
 Pydantic schemas for order-related API requests and responses.
 """
 
-from typing import Optional, List, Any
+from typing import Optional, List, Any, Dict
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -142,7 +142,18 @@ class CancelOrderRequest(BaseModel):
 
 class CancelOrderResponse(BaseModel):
     """Response schema for order cancellation."""
-    
+
     status: str = Field(..., description="Operation status")
     order_id: Optional[str] = Field(None, description="Cancelled order ID")
     response: Optional[Any] = Field(None, description="Raw API response")
+
+
+class RedeemAllResponse(BaseModel):
+    """Response schema for batch redeeming all redeemable positions."""
+
+    status: str = Field(..., description="Overall status: success/partial/failed")
+    total_positions: int = Field(..., description="Total number of redeemable positions")
+    successful: int = Field(..., description="Number of successful redemptions")
+    failed: int = Field(..., description="Number of failed redemptions")
+    results: List[Dict[str, Any]] = Field(default_factory=list, description="List of successful redemption results")
+    errors: List[Dict[str, Any]] = Field(default_factory=list, description="List of error details for failed redemptions")

@@ -3,8 +3,8 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Card, Select, Statistic, Row, Col, Tabs, Typography, Spin, message, Button } from 'antd';
-import { WalletOutlined, DollarOutlined, LineChartOutlined, ReloadOutlined } from '@ant-design/icons';
+import { Card, Select, Statistic, Row, Col, Tabs, Typography, Spin, message, Button, Modal, Table } from 'antd';
+import { WalletOutlined, DollarOutlined, LineChartOutlined, ReloadOutlined, GiftOutlined } from '@ant-design/icons';
 import { apiClient } from '../../api/client';
 import { PositionList } from '../../components/PositionList';
 import { OrderList } from '../../components/OrderList';
@@ -20,6 +20,7 @@ export const TradersPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [activitiesLoading, setActivitiesLoading] = useState(false);
+  const [redeemAllLoading, setRedeemAllLoading] = useState(false);
   const [wallets, setWallets] = useState<ConfigWallet[]>([]);
   const [selectedWallet, setSelectedWallet] = useState<string>('');
   const [positionData, setPositionData] = useState<PositionSummary | null>(null);
@@ -29,6 +30,9 @@ export const TradersPage: React.FC = () => {
   const [currentTab, setCurrentTab] = useState<string>('positions');
   const [ordersLoaded, setOrdersLoaded] = useState(false);
   const [activitiesLoaded, setActivitiesLoaded] = useState(false);
+  const [redeemConfirmModalVisible, setRedeemConfirmModalVisible] = useState(false);
+  const [redeemResultModalVisible, setRedeemResultModalVisible] = useState(false);
+  const [redeemResult, setRedeemResult] = useState<any>(null);
 
   useEffect(() => {
     loadWallets();
@@ -186,6 +190,59 @@ export const TradersPage: React.FC = () => {
     }
   };
 
+  // 计算可赎回仓位
+  const redeemablePositions = positionData?.positions?.filter(p => p.redeemable === true) || [];
+  const redeemableCount = redeemablePositions.length;
+  const redeemableTotalValue = redeemablePositions.reduce((sum, p) => sum + (p.currentValue || 0), 0);
+
+  // 打开批量赎回确认弹窗
+  const handleOpenRedeemAll = () => {
+    if (redeemableCount === 0) {
+      message.warning('没有可赎回的仓位');
+      return;
+    }
+    setRedeemConfirmModalVisible(true);
+  };
+
+  // 执行批量赎回
+  const handleConfirmRedeemAll = async () => {
+    setRedeemConfirmModalVisible(false);
+    setRedeemAllLoading(true);
+
+    const hideLoading = message.loading({ content: '批量赎回进行中...', key: 'redeem-all', duration: 0 });
+
+    try {
+      const result = await apiClient.redeemAllPositions(selectedWallet);
+
+      hideLoading();
+      setRedeemAllLoading(false);
+
+      // 显示结果
+      setRedeemResult(result);
+      setRedeemResultModalVisible(true);
+
+      // 根据结果显示提示
+      if (result.status === 'success') {
+        message.success(`成功赎回 ${result.successful} 个仓位`);
+      } else if (result.status === 'partial') {
+        message.warning(`部分成功: 成功 ${result.successful} 个, 失败 ${result.failed} 个`);
+      } else {
+        message.error('批量赎回失败');
+      }
+
+      // 自动刷新仓位列表
+      await loadWalletData(selectedWallet);
+
+    } catch (error: unknown) {
+      hideLoading();
+      setRedeemAllLoading(false);
+
+      const err = error as { response?: { data?: { detail?: string } }; message?: string };
+      message.error(`批量赎回失败: ${err.response?.data?.detail || err.message || '未知错误'}`);
+      console.error('Redeem all error:', error);
+    }
+  };
+
   const isAnyLoading = loading || ordersLoading || activitiesLoading;
 
   const selectedWalletInfo = wallets.find(w => w.address === selectedWallet);
@@ -200,6 +257,16 @@ export const TradersPage: React.FC = () => {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <Title level={2}>Traders Dashboard</Title>
         <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
+          <Button
+            icon={<GiftOutlined />}
+            onClick={handleOpenRedeemAll}
+            loading={redeemAllLoading}
+            disabled={!selectedWallet || redeemableCount === 0}
+            type="primary"
+            style={{ backgroundColor: '#52c41a' }}
+          >
+            Redeem All ({redeemableCount})
+          </Button>
           <Button
             icon={<ReloadOutlined />}
             onClick={handleRefresh}
@@ -352,6 +419,208 @@ export const TradersPage: React.FC = () => {
           </div>
         </Card>
       )}
+
+      {/* 批量赎回确认弹窗 */}
+      <Modal
+        title="确认批量赎回"
+        open={redeemConfirmModalVisible}
+        onOk={handleConfirmRedeemAll}
+        onCancel={() => setRedeemConfirmModalVisible(false)}
+        okText="确认赎回"
+        cancelText="取消"
+        confirmLoading={redeemAllLoading}
+      >
+        <div style={{ padding: '20px 0' }}>
+          <div style={{ marginBottom: 16 }}>
+            <Typography.Text strong>可赎回仓位数量: </Typography.Text>
+            <Typography.Text style={{ fontSize: '18px', color: '#1890ff' }}>
+              {redeemableCount} 个
+            </Typography.Text>
+          </div>
+          <div style={{ marginBottom: 16 }}>
+            <Typography.Text strong>预估总价值: </Typography.Text>
+            <Typography.Text style={{ fontSize: '18px', color: '#52c41a' }}>
+              ${redeemableTotalValue.toFixed(2)} USDC
+            </Typography.Text>
+          </div>
+          <div style={{ marginBottom: 16, padding: 12, background: '#fff7e6', border: '1px solid #ffd591', borderRadius: 4 }}>
+            <Typography.Text type="warning" strong>
+              ⚠️ 注意事项:
+            </Typography.Text>
+            <ul style={{ marginTop: 8, marginBottom: 0, paddingLeft: 20 }}>
+              <li>此操作会产生 Gas 费用，请确保钱包余额充足</li>
+              <li>赎回过程可能需要几分钟时间，请耐心等待</li>
+              <li>个别仓位赎回失败不会影响其他仓位</li>
+            </ul>
+          </div>
+          <div style={{ padding: 12, background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 4 }}>
+            <Typography.Text style={{ fontSize: '12px', color: '#52c41a' }}>
+              <strong>即将赎回的仓位:</strong>
+            </Typography.Text>
+            <div style={{ maxHeight: 200, overflow: 'auto', marginTop: 8 }}>
+              {redeemablePositions.map((p, idx) => (
+                <div key={idx} style={{ padding: '4px 0', borderBottom: idx < redeemablePositions.length - 1 ? '1px solid #d9f7be' : 'none' }}>
+                  <Typography.Text style={{ fontSize: '12px' }}>
+                    {idx + 1}. {p.title || 'Unknown'} - {p.outcome} (${p.currentValue?.toFixed(2)})
+                  </Typography.Text>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </Modal>
+
+      {/* 批量赎回结果弹窗 */}
+      <Modal
+        title="批量赎回结果"
+        open={redeemResultModalVisible}
+        onOk={() => setRedeemResultModalVisible(false)}
+        onCancel={() => setRedeemResultModalVisible(false)}
+        footer={[
+          <Button key="close" type="primary" onClick={() => setRedeemResultModalVisible(false)}>
+            关闭
+          </Button>
+        ]}
+        width={800}
+      >
+        {redeemResult && (
+          <div>
+            <Row gutter={16} style={{ marginBottom: 24 }}>
+              <Col span={8}>
+                <Statistic
+                  title="总数"
+                  value={redeemResult.total_positions}
+                  prefix={<GiftOutlined />}
+                />
+              </Col>
+              <Col span={8}>
+                <Statistic
+                  title="成功"
+                  value={redeemResult.successful}
+                  valueStyle={{ color: '#52c41a' }}
+                />
+              </Col>
+              <Col span={8}>
+                <Statistic
+                  title="失败"
+                  value={redeemResult.failed}
+                  valueStyle={{ color: redeemResult.failed > 0 ? '#ff4d4f' : '#666' }}
+                />
+              </Col>
+            </Row>
+
+            {redeemResult.successful > 0 && (
+              <div style={{ marginBottom: 24 }}>
+                <Typography.Title level={5} style={{ color: '#52c41a' }}>
+                  ✓ 成功赎回的仓位 ({redeemResult.successful})
+                </Typography.Title>
+                <Table
+                  size="small"
+                  dataSource={redeemResult.results}
+                  rowKey={(record, index) => `success-${index}`}
+                  pagination={false}
+                  scroll={{ y: 200 }}
+                  columns={[
+                    {
+                      title: '市场',
+                      dataIndex: 'market_name',
+                      key: 'market_name',
+                      width: 200,
+                      ellipsis: true,
+                    },
+                    {
+                      title: '结果',
+                      dataIndex: 'outcome',
+                      key: 'outcome',
+                      width: 80,
+                      render: (outcome: string) => (
+                        <Typography.Text strong style={{ color: outcome?.toUpperCase() === 'YES' ? '#52c41a' : '#ff4d4f' }}>
+                          {outcome?.toUpperCase()}
+                        </Typography.Text>
+                      ),
+                    },
+                    {
+                      title: '金额',
+                      dataIndex: 'amounts',
+                      key: 'amounts',
+                      width: 100,
+                      render: (amounts: number[]) => (
+                        <Typography.Text>
+                          ${amounts?.reduce((a, b) => a + b, 0).toFixed(2)}
+                        </Typography.Text>
+                      ),
+                    },
+                    {
+                      title: '交易哈希',
+                      dataIndex: 'tx_hash',
+                      key: 'tx_hash',
+                      ellipsis: true,
+                      render: (txHash: string) => (
+                        txHash ? (
+                          <a
+                            href={`https://polygonscan.com/tx/${txHash}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{ fontSize: '12px' }}
+                          >
+                            {txHash.substring(0, 10)}...{txHash.substring(txHash.length - 8)}
+                          </a>
+                        ) : 'N/A'
+                      ),
+                    },
+                  ]}
+                />
+              </div>
+            )}
+
+            {redeemResult.failed > 0 && (
+              <div>
+                <Typography.Title level={5} style={{ color: '#ff4d4f' }}>
+                  ✗ 赎回失败的仓位 ({redeemResult.failed})
+                </Typography.Title>
+                <Table
+                  size="small"
+                  dataSource={redeemResult.errors}
+                  rowKey={(record, index) => `error-${index}`}
+                  pagination={false}
+                  scroll={{ y: 200 }}
+                  columns={[
+                    {
+                      title: '市场',
+                      dataIndex: 'market_name',
+                      key: 'market_name',
+                      width: 200,
+                      ellipsis: true,
+                    },
+                    {
+                      title: '结果',
+                      dataIndex: 'outcome',
+                      key: 'outcome',
+                      width: 80,
+                      render: (outcome: string) => (
+                        <Typography.Text strong>
+                          {outcome?.toUpperCase()}
+                        </Typography.Text>
+                      ),
+                    },
+                    {
+                      title: '错误原因',
+                      dataIndex: 'error_message',
+                      key: 'error_message',
+                      ellipsis: true,
+                      render: (error: string) => (
+                        <Typography.Text type="danger" style={{ fontSize: '12px' }}>
+                          {error}
+                        </Typography.Text>
+                      ),
+                    },
+                  ]}
+                />
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
     </div>
   );
 };

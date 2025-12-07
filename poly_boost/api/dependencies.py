@@ -172,7 +172,7 @@ def get_order_service(wallet_address: str) -> OrderService:
         ValueError: If wallet not found in configuration
         RuntimeError: If services not initialized
     """
-    if _wallet_manager is None or _client_factory is None:
+    if _wallet_manager is None or _client_factory is None or _position_service is None:
         raise RuntimeError("Services not initialized. Call initialize_services() first.")
 
     # Get wallet from manager (supports multiple address formats)
@@ -190,8 +190,13 @@ def get_order_service(wallet_address: str) -> OrderService:
     clob_client = _client_factory.get_clob_client(wallet)
     web3_client = _client_factory.get_web3_client(wallet)
 
-    # Create OrderService with wallet abstraction
-    order_service = OrderService(wallet, clob_client, web3_client)
+    # Create OrderService with wallet abstraction and PositionService injection
+    order_service = OrderService(
+        wallet=wallet,
+        clob_client=clob_client,
+        web3_client=web3_client,
+        position_service=_position_service  # Inject PositionService for batch operations
+    )
 
     # Cache the service
     _order_service_cache[cache_key] = order_service

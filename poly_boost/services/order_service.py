@@ -26,7 +26,8 @@ class OrderService:
         self,
         wallet: Wallet,
         clob_client: PolymarketClobClient,
-        web3_client: PolymarketWeb3Client
+        web3_client: PolymarketWeb3Client,
+        position_service: Optional['PositionService'] = None
     ):
         """
         Initialize order service.
@@ -35,10 +36,12 @@ class OrderService:
             wallet: Wallet instance (encapsulates address and signature type)
             clob_client: Polymarket CLOB client instance
             web3_client: Polymarket Web3 client instance
+            position_service: PositionService instance for batch operations (optional)
         """
         self.wallet = wallet
         self.clob_client = clob_client
         self.web3_client = web3_client
+        self.position_service = position_service
 
     def sell_position_market(
         self,
@@ -687,4 +690,136 @@ class OrderService:
 
         except Exception as e:
             logger.error(f"Failed to get trade history: {e}")
+            raise
+
+    def redeem_all_positions(self) -> Dict[str, Any]:
+        """
+        Redeem all redeemable positions for the wallet.
+
+        Returns:
+            Dict containing:
+            - status: overall status (success/partial/failed)
+            - total_positions: number of redeemable positions found
+            - successful: number of successful redemptions
+            - failed: number of failed redemptions
+            - results: list of individual redemption results
+            - errors: list of error messages for failed redemptions
+
+        Raises:
+            ValueError: If position_service is not configured
+            Exception: If operation fails completely
+        """
+        try:
+            if self.position_service is None:
+                raise ValueError(
+                    "PositionService not configured. Cannot perform batch redemption."
+                )
+
+            logger.info(f"Starting batch redemption for wallet: {self.wallet.name}")
+
+            # Initialize result containers
+            results = []
+            errors = []
+
+            # Get all positions
+            positions = self.position_service.get_positions(self.wallet)
+
+            # Filter redeemable positions
+            redeemable_positions = [p for p in positions if getattr(p, 'redeemable', False)]
+            total_count = len(redeemable_positions)
+
+            logger.info(f"Found {total_count} redeemable positions")
+
+            if total_count == 0:
+                return {
+                    "status": "success",
+                    "total_positions": 0,
+                    "successful": 0,
+                    "failed": 0,
+                    "results": [],
+                    "errors": []
+                }
+
+            # Process each redeemable position
+            for index, position in enumerate(redeemable_positions):
+                try:
+                    logger.info(
+                        f"Processing position {index + 1}/{total_count}: "
+                        f"{getattr(position, 'title', 'Unknown')} - {getattr(position, 'outcome', 'Unknown')}"
+                    )
+
+                    # Extract required parameters
+                    condition_id = getattr(position, 'condition_id', None)
+                    token_id = getattr(position, 'token_id', None)
+                    amount = getattr(position, 'size', 0)
+
+                    # Validate parameters
+                    if not condition_id:
+                        raise ValueError("Missing condition_id")
+                    if not token_id:
+                        raise ValueError("Missing token_id")
+                    if amount <= 0:
+                        raise ValueError(f"Invalid amount: {amount}")
+
+                    # Call individual redemption method
+                    result = self.claim_rewards(
+                        condition_id=condition_id,
+                        token_id=token_id,
+                        amount=amount
+                    )
+
+                    # Add market information to result
+                    result['market_name'] = getattr(position, 'title', 'Unknown')
+                    result['outcome'] = getattr(position, 'outcome', 'Unknown')
+
+                    results.append(result)
+
+                    logger.info(f"Position {getattr(position, 'title', 'Unknown')} redeemed successfully")
+
+                except Exception as e:
+                    # Record error details, but continue processing
+                    error_detail = {
+                        "condition_id": getattr(position, 'condition_id', 'unknown'),
+                        "token_id": getattr(position, 'token_id', 'unknown'),
+                        "market_name": getattr(position, 'title', 'Unknown'),
+                        "outcome": getattr(position, 'outcome', 'Unknown'),
+                        "error_message": str(e)
+                    }
+                    errors.append(error_detail)
+
+                    logger.error(
+                        f"Position {getattr(position, 'title', 'Unknown')} redemption failed: {e}",
+                        exc_info=True
+                    )
+
+            # Build response
+            successful = len(results)
+            failed = len(errors)
+
+            # Determine overall status
+            if failed == 0:
+                status = "success"
+            elif successful == 0:
+                status = "failed"
+            else:
+                status = "partial"
+
+            response = {
+                "status": status,
+                "total_positions": total_count,
+                "successful": successful,
+                "failed": failed,
+                "results": results,
+                "errors": errors
+            }
+
+            logger.info(
+                f"Batch redemption completed: "
+                f"successful={successful}, failed={failed}, total={total_count}"
+            )
+
+            return response
+
+        except Exception as e:
+            logger.error(f"Batch redemption failed: {e}", exc_info=True)
             raise
