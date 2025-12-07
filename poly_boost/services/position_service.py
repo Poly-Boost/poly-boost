@@ -94,7 +94,7 @@ class PositionService:
             )
 
             # Get positions from data API using the CORRECT address (api_address)
-            positions = self.data_client.get_positions(user=wallet_obj.api_address, redeemable=None)
+            positions = self.data_client.get_positions(user=wallet_obj.api_address, size_threshold=0.01, redeemable=None, mergeable=None)
 
             logger.info(f"Found {len(positions)} positions for {wallet_obj.name}")
             return positions
