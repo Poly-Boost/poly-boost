@@ -11,7 +11,7 @@
 @data_api_host = https://data-api.polymarket.com
 @pnl_api_host = https://user-pnl-api.polymarket.com
 @lb_api_host = https://lb-api.polymarket.com
-@wallet_address = 0x55be7aa03ecfbe37aa5460db791205f7ac9ddca3
+@wallet_address = 0x6031b6eed1c97e853c6e0f03ad3ce3529351f96d
 # Example condition ID (market identifier)
 @condition_id = 0x932224f362b60683a21a1e053a42a44131defc620c3845c4b31f2b6a32e133c0
 
@@ -36,7 +36,7 @@ Accept: application/json
 # Endpoint: GET /activity
 # Description: Get recent activity for a user.
 # see: .venv/Lib/site-packages/polymarket_apis/clients/data_client.py:105
-GET {{data_api_host}}/activity?user={{wallet_address}}&limit=500
+GET {{data_api_host}}/activity?user={{wallet_address}}&limit=1000
 Accept: application/json
 
 ###

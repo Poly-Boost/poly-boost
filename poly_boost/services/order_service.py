@@ -64,13 +64,16 @@ class OrderService:
             Exception: If order execution fails
         """
         try:
+            # Ensure conditional tokens approval for exchange contracts
+            self._ensure_sell_approvals()
+
             # Get current token balance if amount not specified
             if amount is None:
                 # Use wallet's api_address (automatically correct for EOA/Proxy)
                 balance = self.web3_client.get_token_balance(token_id, self.wallet.api_address)
                 amount = balance
                 logger.info(f"Selling all available balance: {amount} from {self.wallet.name}")
-            
+
             if amount <= 0:
                 raise ValueError("Amount must be greater than 0")
 
@@ -134,16 +137,19 @@ class OrderService:
             Exception: If order creation fails
         """
         try:
+            # Ensure conditional tokens approval for exchange contracts
+            self._ensure_sell_approvals()
+
             # Get current token balance if amount not specified
             if amount is None:
                 # Use wallet's api_address (automatically correct for EOA/Proxy)
                 balance = self.web3_client.get_token_balance(token_id, self.wallet.api_address)
                 amount = balance
                 logger.info(f"Selling all available balance: {amount} from {self.wallet.name}")
-            
+
             if amount <= 0:
                 raise ValueError("Amount must be greater than 0")
-            
+
             if not (0 < price < 1):
                 raise ValueError("Price must be between 0 and 1")
 
@@ -310,6 +316,24 @@ class OrderService:
         except Exception as e:
             logger.error(f"Failed to create limit buy order: {e}")
             raise
+
+    def _ensure_sell_approvals(self):
+        """Check and set conditional tokens approvals for sell operations."""
+        exchange_addresses = [
+            self.web3_client.exchange_address,
+            self.web3_client.neg_risk_exchange_address,
+            self.web3_client.neg_risk_adapter_address,
+        ]
+
+        for spender in exchange_addresses:
+            is_approved = self.web3_client.conditional_tokens.functions.isApprovedForAll(
+                self.web3_client.account.address,
+                spender
+            ).call()
+
+            if not is_approved:
+                logger.info(f"Setting conditional tokens approval for {spender}")
+                self.web3_client.set_conditional_tokens_approval(spender=spender)
 
     def _get_token_balance_wei(self, token_id: str, address: str) -> int:
         """Return raw ERC1155 balance for ``token_id`` owned by ``address``."""
